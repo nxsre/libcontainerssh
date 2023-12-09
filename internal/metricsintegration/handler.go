@@ -2,14 +2,15 @@ package metricsintegration
 
 import (
 	"context"
+	"github.com/gliderlabs/ssh"
 	"net"
 	"sync"
 
-    auth2 "go.containerssh.io/libcontainerssh/auth"
-    "go.containerssh.io/libcontainerssh/internal/auth"
-    "go.containerssh.io/libcontainerssh/internal/metrics"
-    "go.containerssh.io/libcontainerssh/internal/sshserver"
-    "go.containerssh.io/libcontainerssh/metadata"
+	auth2 "go.containerssh.io/libcontainerssh/auth"
+	"go.containerssh.io/libcontainerssh/internal/auth"
+	"go.containerssh.io/libcontainerssh/internal/metrics"
+	"go.containerssh.io/libcontainerssh/internal/sshserver"
+	"go.containerssh.io/libcontainerssh/metadata"
 )
 
 type metricsHandler struct {
@@ -58,6 +59,10 @@ func (m *metricsNetworkHandler) OnShutdown(shutdownContext context.Context) {
 	m.backend.OnShutdown(shutdownContext)
 }
 
+func (m *metricsNetworkHandler) Context() ssh.Context {
+	return m.backend.Context()
+}
+
 func (m *metricsNetworkHandler) OnAuthPassword(meta metadata.ConnectionAuthPendingMetadata, password []byte) (
 	response sshserver.AuthResponse,
 	metadata metadata.ConnectionAuthenticatedMetadata,
@@ -97,12 +102,12 @@ func (m *metricsNetworkHandler) OnHandshakeFailed(meta metadata.ConnectionMetada
 	m.backend.OnHandshakeFailed(meta, reason)
 }
 
-func (m *metricsNetworkHandler) OnHandshakeSuccess(meta metadata.ConnectionAuthenticatedMetadata) (
+func (m *metricsNetworkHandler) OnHandshakeSuccess(meta metadata.ConnectionAuthenticatedMetadata, ctx ssh.Context) (
 	connection sshserver.SSHConnectionHandler,
 	metadata metadata.ConnectionAuthenticatedMetadata,
 	failureReason error,
 ) {
-	connectionHandler, meta, failureReason := m.backend.OnHandshakeSuccess(meta)
+	connectionHandler, meta, failureReason := m.backend.OnHandshakeSuccess(meta, ctx)
 	if failureReason != nil {
 		m.handler.handshakeFailedMetric.Increment(m.client.IP)
 		return connectionHandler, meta, failureReason

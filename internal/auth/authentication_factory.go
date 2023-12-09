@@ -29,6 +29,12 @@ func NewPasswordAuthenticator(
 	case config.PasswordAuthMethodKerberos:
 		cli, err := NewKerberosClient(AuthenticationTypePassword, cfg.Kerberos, logger, metrics)
 		return cli, nil, err
+	case config.PasswordAuthMethodPAM:
+		cli, err := NewPamClient(AuthenticationTypePassword, cfg.PAM, logger, metrics)
+		return cli, nil, err
+	case config.PasswordAuthMethodPassThrough:
+		cli, err := NewPassThroughClient(AuthenticationTypePassword, cfg.PassThrough, logger, metrics)
+		return cli, nil, err
 	default:
 		return nil, nil, fmt.Errorf("unsupported method: %s", cfg.Method)
 	}
@@ -50,6 +56,12 @@ func NewPublicKeyAuthenticator(
 		return nil, nil, nil
 	case config.PubKeyAuthMethodWebhook:
 		cli, err := NewWebhookClient(AuthenticationTypePublicKey, cfg.Webhook, logger, metrics)
+		return cli, nil, err
+	case config.PubKeyAuthMethodLocal:
+		cli, err := NewLocalClient(AuthenticationTypePublicKey, cfg.Local, logger, metrics)
+		return cli, nil, err
+	case config.PubKeyAuthMethodPassThrough:
+		cli, err := NewPassThroughClient(AuthenticationTypePublicKey, cfg.PassThrough, logger, metrics)
 		return cli, nil, err
 	default:
 		return nil, nil, fmt.Errorf("unsupported method: %s", cfg.Method)

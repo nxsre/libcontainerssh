@@ -305,6 +305,30 @@ func (m SSHMAC) Validate() error {
 	return fmt.Errorf("SSHMAC not supported: %s", m)
 }
 
+type SSHPubKey string
+
+// String creates a string representation.
+func (m SSHPubKey) String() string {
+	return string(m)
+}
+
+// SSHPubKeyList is a list of SSHPubKey algorithms
+type SSHPubKeyList []SSHPubKey
+
+// Validate checks if the SSHPubKeyList is valid.
+func (m SSHPubKeyList) Validate() error {
+	return nil
+}
+
+// StringList returns a list of SSHPubKey names.
+func (m SSHPubKeyList) StringList() []string {
+	kyes := make([]string, len(m))
+	for i, v := range m {
+		kyes[i] = v.String()
+	}
+	return kyes
+}
+
 // SSHMACList is a list of SSHMAC algorithms
 type SSHMACList []SSHMAC
 

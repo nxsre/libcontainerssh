@@ -1,8 +1,10 @@
 package log
 
 import (
-    "go.containerssh.io/libcontainerssh/config"
-    messageCodes "go.containerssh.io/libcontainerssh/message"
+	"fmt"
+	"go.containerssh.io/libcontainerssh/config"
+	messageCodes "go.containerssh.io/libcontainerssh/message"
+	"runtime"
 )
 
 type logger struct {
@@ -72,6 +74,14 @@ func (pipeline *logger) write(level config.LogLevel, message ...interface{}) {
 		for label, value := range pipeline.labels {
 			msg = msg.Label(label, value)
 		}
+
+		//if level == config.LogLevelDebug {
+		pc, file, line, ok := runtime.Caller(2)
+		if ok {
+			msg = msg.Label("funcName", runtime.FuncForPC(pc).Name())
+			msg = msg.Label("code", fmt.Sprintf("%s:%d", file, line))
+		}
+		//}
 
 		if err := pipeline.writer.Write(level, msg); err != nil {
 			panic(err)

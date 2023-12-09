@@ -3,17 +3,18 @@ package sshserver
 import (
 	"errors"
 	"fmt"
+	"github.com/gliderlabs/ssh"
+	ssh2 "go.containerssh.io/libcontainerssh/internal/ssh"
+	"go.containerssh.io/libcontainerssh/log"
+	messageCodes "go.containerssh.io/libcontainerssh/message"
+	gossh "golang.org/x/crypto/ssh"
 	"io"
 	"sync"
-
-    ssh2 "go.containerssh.io/libcontainerssh/internal/ssh"
-    "go.containerssh.io/libcontainerssh/log"
-    messageCodes "go.containerssh.io/libcontainerssh/message"
-	"golang.org/x/crypto/ssh"
 )
 
 type channelWrapper struct {
-	channel        ssh.Channel
+	ctx            ssh.Context
+	channel        gossh.Channel
 	logger         log.Logger
 	lock           *sync.Mutex
 	exitSent       bool
@@ -62,7 +63,7 @@ func (c *channelWrapper) ExitStatus(exitCode uint32) {
 	if _, err := c.channel.SendRequest(
 		"exit-status",
 		false,
-		ssh.Marshal(
+		gossh.Marshal(
 			ssh2.ExitStatusPayload{
 				ExitStatus: exitCode,
 			})); err != nil {
@@ -96,7 +97,7 @@ func (c *channelWrapper) ExitSignal(signal string, coreDumped bool, errorMessage
 	if _, err := c.channel.SendRequest(
 		"exit-signal",
 		false,
-		ssh.Marshal(
+		gossh.Marshal(
 			ssh2.ExitSignalPayload{
 				Signal:       signal,
 				CoreDumped:   coreDumped,
@@ -140,4 +141,8 @@ func (c *channelWrapper) onClose() {
 	c.lock.Lock()
 	defer c.lock.Unlock()
 	c.closed = true
+}
+
+func (c *channelWrapper) Context() ssh.Context {
+	return c.ctx
 }

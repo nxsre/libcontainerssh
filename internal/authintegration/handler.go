@@ -2,6 +2,7 @@ package authintegration
 
 import (
 	"context"
+	"github.com/gliderlabs/ssh"
 	"net"
 
 	auth2 "go.containerssh.io/libcontainerssh/auth"
@@ -120,6 +121,10 @@ func (h *networkConnectionHandler) OnShutdown(shutdownContext context.Context) {
 	h.backend.OnShutdown(shutdownContext)
 }
 
+func (h *networkConnectionHandler) Context() ssh.Context {
+	return h.backend.Context()
+}
+
 func (h *networkConnectionHandler) OnAuthPassword(
 	meta metadata.ConnectionAuthPendingMetadata,
 	password []byte,
@@ -134,6 +139,7 @@ func (h *networkConnectionHandler) OnAuthPassword(
 			"Password authentication is disabled.",
 		)
 	}
+
 	authContext := h.passwordAuthenticator.Password(meta, password)
 	h.authContext = authContext
 	if !authContext.Success() {
@@ -148,6 +154,7 @@ func (h *networkConnectionHandler) OnAuthPassword(
 		}
 		return sshserver.AuthResponseFailure, meta.AuthFailed(), nil
 	}
+
 	if h.behavior == BehaviorPassthroughOnSuccess {
 		return h.backend.OnAuthPassword(meta, password)
 	} else {
@@ -263,12 +270,12 @@ func (h *networkConnectionHandler) OnHandshakeFailed(meta metadata.ConnectionMet
 	h.backend.OnHandshakeFailed(meta, reason)
 }
 
-func (h *networkConnectionHandler) OnHandshakeSuccess(meta metadata.ConnectionAuthenticatedMetadata) (
+func (h *networkConnectionHandler) OnHandshakeSuccess(meta metadata.ConnectionAuthenticatedMetadata, ctx ssh.Context) (
 	sshserver.SSHConnectionHandler,
 	metadata.ConnectionAuthenticatedMetadata,
 	error,
 ) {
-	return h.backend.OnHandshakeSuccess(meta)
+	return h.backend.OnHandshakeSuccess(meta, ctx)
 }
 
 func (h *networkConnectionHandler) OnDisconnect() {

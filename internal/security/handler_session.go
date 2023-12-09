@@ -2,11 +2,12 @@ package security
 
 import (
 	"context"
+	"github.com/gliderlabs/ssh"
 
-    config2 "go.containerssh.io/libcontainerssh/config"
-    "go.containerssh.io/libcontainerssh/internal/sshserver"
-    "go.containerssh.io/libcontainerssh/log"
-    "go.containerssh.io/libcontainerssh/message"
+	config2 "go.containerssh.io/libcontainerssh/config"
+	"go.containerssh.io/libcontainerssh/internal/sshserver"
+	"go.containerssh.io/libcontainerssh/log"
+	"go.containerssh.io/libcontainerssh/message"
 )
 
 type sessionHandler struct {
@@ -151,6 +152,7 @@ func (s *sessionHandler) OnExecRequest(
 	default:
 	}
 	if s.config.ForceCommand == "" {
+		s.logger.Info("非 ForceCommand, 执行：", program)
 		return s.backend.OnExecRequest(requestID, program)
 	}
 	if err := s.backend.OnEnvRequest(requestID, "SSH_ORIGINAL_COMMAND", program); err != nil {
@@ -334,4 +336,8 @@ func (s *sessionHandler) OnX11Request(
 	default:
 		return s.backend.OnX11Request(requestID, singleConnection, protocol, cookie, screen, reverseHandler)
 	}
+}
+
+func (s *sessionHandler) Context() ssh.Context {
+	return s.backend.Context()
 }

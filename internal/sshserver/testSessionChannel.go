@@ -5,10 +5,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/gliderlabs/ssh"
 	"io"
 	"strings"
 
-    "go.containerssh.io/libcontainerssh/internal/unixutils"
+	"go.containerssh.io/libcontainerssh/internal/unixutils"
 )
 
 type testSessionChannel struct {
@@ -21,6 +22,8 @@ type testSessionChannel struct {
 	columns uint32
 	running bool
 	term    bool
+
+	ctx ssh.Context
 }
 
 func (t *testSessionChannel) OnEnvRequest(_ uint64, name string, value string) error {
@@ -254,4 +257,8 @@ func (t *testSessionChannel) OnShutdown(_ context.Context) {
 	if t.running {
 		_ = t.session.Close()
 	}
+}
+
+func (t *testSessionChannel) Context() ssh.Context {
+	return t.ctx
 }

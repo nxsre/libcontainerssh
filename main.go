@@ -21,6 +21,11 @@ import (
 	"go.containerssh.io/libcontainerssh/service"
 )
 
+var (
+	configFile                                          string
+	actionDumpConfig, actionLicenses, actionHealthCheck bool
+)
+
 // Main is a helper function to start a standard ContainerSSH instance. It should be used as the outer-most function
 // and should never be used as an embedding technique.
 func Main() {
@@ -36,8 +41,7 @@ func Main() {
 	}
 
 	logger = logger.WithLabel("module", "core")
-
-	configFile, actionDumpConfig, actionLicenses, actionHealthCheck := getArguments()
+	configFile, actionDumpConfig, actionLicenses, actionHealthCheck = getArguments()
 
 	if configFile == "" {
 		configFile = "config.yaml"
@@ -143,7 +147,6 @@ func runContainerSSH(
 }
 
 func getArguments() (string, bool, bool, bool) {
-	configFile := ""
 	actionDumpConfig := false
 	actionLicenses := false
 	healthCheck := false

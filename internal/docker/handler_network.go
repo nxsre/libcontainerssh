@@ -3,17 +3,18 @@ package docker
 import (
 	"context"
 	"fmt"
+	"github.com/gliderlabs/ssh"
 	"net"
 	"strings"
 	"sync"
 
-    auth2 "go.containerssh.io/libcontainerssh/auth"
-    "go.containerssh.io/libcontainerssh/config"
-    "go.containerssh.io/libcontainerssh/internal/sshserver"
-    "go.containerssh.io/libcontainerssh/internal/agentforward"
-    "go.containerssh.io/libcontainerssh/log"
-    "go.containerssh.io/libcontainerssh/message"
-    "go.containerssh.io/libcontainerssh/metadata"
+	auth2 "go.containerssh.io/libcontainerssh/auth"
+	"go.containerssh.io/libcontainerssh/config"
+	"go.containerssh.io/libcontainerssh/internal/agentforward"
+	"go.containerssh.io/libcontainerssh/internal/sshserver"
+	"go.containerssh.io/libcontainerssh/log"
+	"go.containerssh.io/libcontainerssh/message"
+	"go.containerssh.io/libcontainerssh/metadata"
 )
 
 type networkHandler struct {
@@ -31,6 +32,7 @@ type networkHandler struct {
 	disconnected        bool
 	labels              map[string]string
 	done                chan struct{}
+	ctx                 ssh.Context
 }
 
 func (n *networkHandler) OnAuthPassword(meta metadata.ConnectionAuthPendingMetadata, _ []byte) (
@@ -50,7 +52,7 @@ func (n *networkHandler) OnAuthPubKey(
 
 func (n *networkHandler) OnHandshakeFailed(metadata.ConnectionMetadata, error) {}
 
-func (n *networkHandler) OnHandshakeSuccess(meta metadata.ConnectionAuthenticatedMetadata) (
+func (n *networkHandler) OnHandshakeSuccess(meta metadata.ConnectionAuthenticatedMetadata, sshCtx ssh.Context) (
 	connection sshserver.SSHConnectionHandler,
 	metadata metadata.ConnectionAuthenticatedMetadata,
 	failureReason error,
@@ -62,6 +64,9 @@ func (n *networkHandler) OnHandshakeSuccess(meta metadata.ConnectionAuthenticate
 		n.config.Timeouts.ContainerStart,
 	)
 	defer cancelFunc()
+
+	n.ctx = sshCtx
+
 	n.username = meta.Username
 	env := map[string]string{}
 	if n.config.Execution.ExposeAuthMetadataAsEnv {
@@ -189,4 +194,8 @@ func (n *networkHandler) OnShutdown(shutdownContext context.Context) {
 		n.OnDisconnect()
 	case <-n.done:
 	}
+}
+
+func (n *networkHandler) Context() ssh.Context {
+	return nil
 }

@@ -152,6 +152,7 @@ func createSSHServer(
 ) error {
 	sshLogger := logger.WithLabel("module", "ssh")
 	sshServer, err := sshserver.New(
+		configFile,
 		cfg.SSH,
 		auditLogHandler,
 		sshLogger,

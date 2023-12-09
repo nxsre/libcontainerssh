@@ -3,21 +3,22 @@ package sshproxy
 import (
 	"context"
 	"fmt"
+	"github.com/gliderlabs/ssh"
 	"net"
 	"sync"
 	"time"
 
-    auth2 "go.containerssh.io/libcontainerssh/auth"
-    "go.containerssh.io/libcontainerssh/config"
-    "go.containerssh.io/libcontainerssh/internal/auth"
-    "go.containerssh.io/libcontainerssh/internal/metrics"
-    "go.containerssh.io/libcontainerssh/log"
-    "go.containerssh.io/libcontainerssh/message"
-    "go.containerssh.io/libcontainerssh/metadata"
+	auth2 "go.containerssh.io/libcontainerssh/auth"
+	"go.containerssh.io/libcontainerssh/config"
+	"go.containerssh.io/libcontainerssh/internal/auth"
+	"go.containerssh.io/libcontainerssh/internal/metrics"
+	"go.containerssh.io/libcontainerssh/log"
+	"go.containerssh.io/libcontainerssh/message"
+	"go.containerssh.io/libcontainerssh/metadata"
 
-	"golang.org/x/crypto/ssh"
+	gossh "golang.org/x/crypto/ssh"
 
-    "go.containerssh.io/libcontainerssh/internal/sshserver"
+	"go.containerssh.io/libcontainerssh/internal/sshserver"
 )
 
 type networkConnectionHandler struct {
@@ -31,15 +32,18 @@ type networkConnectionHandler struct {
 	backendFailuresMetric metrics.SimpleCounter
 	tcpConn               net.Conn
 	disconnected          bool
-	privateKey            ssh.Signer
+	privateKey            gossh.Signer
+	proyClient            *gossh.Client
 	done                  bool
+	ctx                   ssh.Context
 }
 
-func (s *networkConnectionHandler) OnAuthPassword(meta metadata.ConnectionAuthPendingMetadata, _ []byte) (
+func (s *networkConnectionHandler) OnAuthPassword(meta metadata.ConnectionAuthPendingMetadata, password []byte) (
 	_ sshserver.AuthResponse,
 	_ metadata.ConnectionAuthenticatedMetadata,
 	_ error,
 ) {
+	s.logger.Info("password:::", string(password))
 	return sshserver.AuthResponseUnavailable, meta.AuthFailed(), fmt.Errorf(
 		"ssh proxy does not support authentication",
 	)
@@ -58,9 +62,9 @@ func (s *networkConnectionHandler) OnAuthPubKey(meta metadata.ConnectionAuthPend
 func (s *networkConnectionHandler) OnAuthKeyboardInteractive(
 	meta metadata.ConnectionAuthPendingMetadata,
 	_ func(
-		_ string,
-		_ sshserver.KeyboardInteractiveQuestions,
-	) (answers sshserver.KeyboardInteractiveAnswers, err error),
+	_ string,
+	_ sshserver.KeyboardInteractiveQuestions,
+) (answers sshserver.KeyboardInteractiveAnswers, err error),
 ) (sshserver.AuthResponse, metadata.ConnectionAuthenticatedMetadata, error) {
 	return sshserver.AuthResponseUnavailable, meta.AuthFailed(), fmt.Errorf(
 		"ssh proxy does not support authentication",
@@ -75,6 +79,7 @@ func (s *networkConnectionHandler) OnHandshakeFailed(_ metadata.ConnectionMetada
 
 func (s *networkConnectionHandler) OnHandshakeSuccess(
 	meta metadata.ConnectionAuthenticatedMetadata,
+	ctx ssh.Context,
 ) (
 	connection sshserver.SSHConnectionHandler,
 	metadata metadata.ConnectionAuthenticatedMetadata,
@@ -88,39 +93,41 @@ func (s *networkConnectionHandler) OnHandshakeSuccess(
 			"could not connect to backend because the user already disconnected",
 		)
 	}
-	sshConn, newChannels, requests, err := s.createBackendSSHConnection(meta.Username)
+	s.logger.Debug(fmt.Sprintf("%+v", meta))
+	sshConn, newChannels, requests, err := s.createBackendSSHConnection(meta.Username, meta.Metadata["password"], meta.Metadata["pubKey"])
 	if err != nil {
 		return nil, meta, err
 	}
 
-	connectionHandler := &sshConnectionHandler{
+	sshConnectionHandler := &sshConnectionHandler{
 		networkHandler: s,
 		sshConn:        sshConn,
 		logger:         s.logger,
+		ctx:            ctx,
 	}
-	go connectionHandler.handleChannels(newChannels)
-	go connectionHandler.handleRequests(requests)
+	go sshConnectionHandler.handleChannels(newChannels)
+	go sshConnectionHandler.handleRequests(requests)
 
-	return connectionHandler, meta, nil
+	return sshConnectionHandler, meta, nil
 }
 
-func (s *networkConnectionHandler) createBackendSSHConnection(username string) (
-	ssh.Conn,
-	<-chan ssh.NewChannel,
-	<-chan *ssh.Request,
+func (s *networkConnectionHandler) createBackendSSHConnection(username string, password, pubkey metadata.Value) (
+	gossh.Conn,
+	<-chan gossh.NewChannel,
+	<-chan *gossh.Request,
 	error,
 ) {
 	s.backendRequestsMetric.Increment()
 	target := fmt.Sprintf("%s:%d", s.config.Server, s.config.Port)
-	tcpConn, err := s.createBackendTCPConnection(username, target)
+	proyClient, tcpConn, err := s.createBackendTCPConnection(username, target)
 	if err != nil {
 		return nil, nil, nil, err
 	}
 	s.tcpConn = tcpConn
+	s.proyClient = proyClient
+	sshClientConfig := s.createClientConfig(username, password.Value, pubkey.Value)
 
-	sshClientConfig := s.createClientConfig(username)
-
-	sshConn, newChannels, requests, err := ssh.NewClientConn(s.tcpConn, target, sshClientConfig)
+	sshConn, newChannels, requests, err := gossh.NewClientConn(s.tcpConn, target, sshClientConfig)
 	if err != nil {
 		s.backendFailuresMetric.Increment(metrics.Label("failure", "handshake"))
 		return nil, nil, nil, message.WrapUser(
@@ -134,32 +141,64 @@ func (s *networkConnectionHandler) createBackendSSHConnection(username string) (
 	return sshConn, newChannels, requests, nil
 }
 
-func (s *networkConnectionHandler) createClientConfig(username string) *ssh.ClientConfig {
+func (s *networkConnectionHandler) createClientConfig(username, password, pubkey string) *gossh.ClientConfig {
 	if !s.config.UsernamePassThrough {
 		username = s.config.Username
 	}
 
-	authMethods := []ssh.AuthMethod{
-		ssh.Password(s.config.Password),
-	}
-
-	if s.privateKey != nil {
-		authMethods = append(
-			authMethods, ssh.PublicKeys(
-				s.privateKey,
-			),
+	authMethods := []gossh.AuthMethod{}
+	if password != "" {
+		authMethods = append(authMethods,
+			//ssh.Password(s.config.Password),
+			gossh.Password(password),
 		)
 	}
-	sshClientConfig := &ssh.ClientConfig{
-		Config: ssh.Config{
+
+	s.logger.Debug(password, pubkey)
+	// 验证用户公钥
+	keysMap := map[string]bool{}
+	for _, key := range s.config.PubKeys {
+		userKey, _, _, _, err := ssh.ParseAuthorizedKey([]byte(key))
+		if err != nil {
+			s.logger.Error(key, err)
+			continue
+		}
+
+		keysMap[string(userKey.Marshal())] = true
+	}
+
+	reqKey, _, _, _, err := ssh.ParseAuthorizedKey([]byte(pubkey))
+	if err != nil {
+		s.logger.Error(err)
+	} else {
+		if _, ok := keysMap[string(reqKey.Marshal())]; ok {
+			if true {
+				if s.privateKey != nil {
+					authMethods = append(
+						authMethods, gossh.PublicKeys(
+							s.privateKey,
+						),
+					)
+				}
+			}
+		}
+	}
+
+	sshClientConfig := &gossh.ClientConfig{
+		Config: gossh.Config{
 			KeyExchanges: s.config.KexAlgorithms.StringList(),
 			Ciphers:      s.config.Ciphers.StringList(),
 			MACs:         s.config.MACs.StringList(),
 		},
 		User: username,
 		Auth: authMethods,
-		HostKeyCallback: func(hostname string, remote net.Addr, key ssh.PublicKey) error {
-			fingerprint := ssh.FingerprintSHA256(key)
+		HostKeyCallback: func(hostname string, remote net.Addr, key gossh.PublicKey) error {
+			if !s.config.StrictHostKeyChecking {
+				return nil
+			}
+
+			fingerprint := gossh.FingerprintSHA256(key)
+
 			for _, fp := range s.config.AllowedHostKeyFingerprints {
 				if fingerprint == fp {
 					return nil
@@ -184,7 +223,7 @@ func (s *networkConnectionHandler) createClientConfig(username string) *ssh.Clie
 func (s *networkConnectionHandler) createBackendTCPConnection(
 	_ string,
 	target string,
-) (net.Conn, error) {
+) (*gossh.Client, net.Conn, error) {
 	s.logger.Debug(message.NewMessage(message.MSSHProxyConnecting, "Connecting to backend server %s", target))
 	ctx, cancelFunc := context.WithTimeout(context.Background(), s.config.Timeout)
 	defer cancelFunc()
@@ -192,10 +231,29 @@ func (s *networkConnectionHandler) createBackendTCPConnection(
 	var lastError error
 loop:
 	for {
-		networkConnection, lastError = net.Dial("tcp", target)
-		if lastError == nil {
-			return networkConnection, nil
+		if s.config.ProxyJump != nil {
+			proxyConfig, closer := config.GetSSHConfig(s.config.ProxyJump)
+			if closer != nil {
+				defer closer.Close()
+			}
+
+			proxyClient, lastError := gossh.Dial("tcp", net.JoinHostPort(s.config.ProxyJump.Server, s.config.ProxyJump.Port), proxyConfig)
+			if lastError != nil {
+				continue
+			}
+
+			networkConnection, lastError = proxyClient.Dial("tcp", target)
+			if lastError == nil {
+				return proxyClient, networkConnection, nil
+			}
+
+		} else {
+			networkConnection, lastError = net.Dial("tcp", target)
+			if lastError == nil {
+				return nil, networkConnection, nil
+			}
 		}
+
 		s.backendFailuresMetric.Increment(metrics.Label("failure", "tcp"))
 		s.logger.Debug(
 			message.WrapUser(
@@ -218,7 +276,7 @@ loop:
 		"connection to SSH backend failed, giving up",
 	)
 	s.logger.Error(err)
-	return nil, err
+	return nil, nil, err
 }
 
 func (s *networkConnectionHandler) OnDisconnect() {
@@ -239,6 +297,7 @@ func (s *networkConnectionHandler) OnDisconnect() {
 	s.wg.Wait()
 	s.done = true
 	s.disconnected = true
+
 	if s.tcpConn != nil {
 		s.logger.Debug(message.NewMessage(message.MSSHProxyBackendDisconnecting, "Disconnecting backend connection..."))
 		if err := s.tcpConn.Close(); err != nil {
@@ -259,6 +318,22 @@ func (s *networkConnectionHandler) OnDisconnect() {
 			),
 		)
 	}
+	if s.proyClient != nil {
+		if err := s.proyClient.Close(); err != nil {
+			s.logger.Debug(
+				message.Wrap(
+					err,
+					message.MSSHProxyBackendDisconnectFailed, "Failed to disconnect proxyClient.",
+				),
+			)
+		}
+	} else {
+		s.logger.Debug(message.NewMessage(message.MSSHProxyBackendDisconnected, "Backend proxyClient disconnected."))
+	}
 }
 
 func (s *networkConnectionHandler) OnShutdown(_ context.Context) {}
+
+func (s *networkConnectionHandler) Context() ssh.Context {
+	return s.ctx
+}

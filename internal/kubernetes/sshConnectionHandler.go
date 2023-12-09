@@ -3,14 +3,15 @@ package kubernetes
 import (
 	"context"
 	"fmt"
+	"github.com/gliderlabs/ssh"
 	"io"
 
-    "go.containerssh.io/libcontainerssh/config"
-    "go.containerssh.io/libcontainerssh/internal/agentforward"
-    "go.containerssh.io/libcontainerssh/internal/sshserver"
-    "go.containerssh.io/libcontainerssh/message"
-    "go.containerssh.io/libcontainerssh/metadata"
-	"golang.org/x/crypto/ssh"
+	"go.containerssh.io/libcontainerssh/config"
+	"go.containerssh.io/libcontainerssh/internal/agentforward"
+	"go.containerssh.io/libcontainerssh/internal/sshserver"
+	"go.containerssh.io/libcontainerssh/message"
+	"go.containerssh.io/libcontainerssh/metadata"
+	gossh "golang.org/x/crypto/ssh"
 )
 
 type sshConnectionHandler struct {
@@ -19,6 +20,7 @@ type sshConnectionHandler struct {
 	env            map[string]string
 	files          map[string][]byte
 	agentForward   agentforward.AgentForward
+	ctx            ssh.Context
 }
 
 func (s *sshConnectionHandler) OnUnsupportedGlobalRequest(_ uint64, _ string, _ []byte) {
@@ -30,6 +32,10 @@ func (s *sshConnectionHandler) OnUnsupportedChannel(_ uint64, _ string, _ []byte
 }
 
 func (s *sshConnectionHandler) OnShutdown(_ context.Context) {}
+
+func (s *sshConnectionHandler) Context() ssh.Context {
+	return s.ctx
+}
 
 func (s *sshConnectionHandler) OnSessionChannel(
 	meta metadata.ChannelMetadata,
@@ -70,7 +76,7 @@ func (s *sshConnectionHandler) OnTCPForwardChannel(
 		originatorPort,
 	)
 	if err != nil {
-		return nil, sshserver.NewChannelRejection(ssh.ConnectionFailed, message.EKubernetesForwardingFailed, "Error setting up the forwarding", "Error setting up the forwarding")
+		return nil, sshserver.NewChannelRejection(gossh.ConnectionFailed, message.EKubernetesForwardingFailed, "Error setting up the forwarding", "Error setting up the forwarding")
 	}
 	return channel, nil
 }
@@ -106,7 +112,7 @@ func (s *sshConnectionHandler) OnDirectStreamLocal(
 		path,
 	)
 	if err != nil {
-		return nil, sshserver.NewChannelRejection(ssh.ConnectionFailed, message.EKubernetesForwardingFailed, "Error setting up the forwarding", "Error setting up the forwarding")
+		return nil, sshserver.NewChannelRejection(gossh.ConnectionFailed, message.EKubernetesForwardingFailed, "Error setting up the forwarding", "Error setting up the forwarding")
 	}
 	return channel, nil
 }

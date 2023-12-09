@@ -3,24 +3,32 @@ package sshserver
 import (
 	"context"
 	"fmt"
+	"github.com/gliderlabs/ssh"
 	"net"
 )
 
 // AbstractHandler is the abstract implementation of the Handler interface that can be embedded to get a partial
 // implementation.
 type AbstractHandler struct {
+	Ctx ssh.Context
 }
 
 // OnReady is called when the server is ready to receive connections. It has an opportunity to return an error to
-//         abort the startup.
+//
+//	abort the startup.
 func (a *AbstractHandler) OnReady() error {
 	return nil
 }
 
 // OnShutdown is called when a shutdown of the SSH server is desired. The shutdownContext is passed as a deadline
-//            for the shutdown, after which the server should abort all running connections and return as fast as
-//            possible.
+//
+//	for the shutdown, after which the server should abort all running connections and return as fast as
+//	possible.
 func (a *AbstractHandler) OnShutdown(_ context.Context) {
+}
+
+func (a *AbstractHandler) Context() ssh.Context {
+	return a.Ctx
 }
 
 // OnNetworkConnection is called when a new network connection is opened. It must either return a

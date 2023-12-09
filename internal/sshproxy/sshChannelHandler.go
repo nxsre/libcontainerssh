@@ -3,6 +3,8 @@ package sshproxy
 import (
 	"context"
 	"errors"
+	"fmt"
+	"github.com/gliderlabs/ssh"
 	"io"
 	"sync"
 
@@ -10,14 +12,14 @@ import (
 	"go.containerssh.io/libcontainerssh/internal/sshserver"
 	"go.containerssh.io/libcontainerssh/log"
 	"go.containerssh.io/libcontainerssh/message"
-	"golang.org/x/crypto/ssh"
+	gossh "golang.org/x/crypto/ssh"
 )
 
 type sshChannelHandler struct {
 	lock              *sync.Mutex
-	backingChannel    ssh.Channel
+	backingChannel    gossh.Channel
 	connectionHandler *sshConnectionHandler
-	requests          <-chan *ssh.Request
+	requests          <-chan *gossh.Request
 	session           sshserver.SessionChannel
 	started           bool
 	logger            log.Logger
@@ -27,11 +29,11 @@ type sshChannelHandler struct {
 }
 
 func (s *sshChannelHandler) handleBackendClientRequests(
-	requests <-chan *ssh.Request,
+	requests <-chan *gossh.Request,
 	session sshserver.SessionChannel,
 ) {
 	for {
-		var request *ssh.Request
+		var request *gossh.Request
 		var ok bool
 		select {
 		case request, ok = <-requests:
@@ -64,9 +66,9 @@ func (s *sshChannelHandler) handleBackendClientRequests(
 	}
 }
 
-func (s *sshChannelHandler) handleExitStatusFromBackend(request *ssh.Request, session sshserver.SessionChannel) {
+func (s *sshChannelHandler) handleExitStatusFromBackend(request *gossh.Request, session sshserver.SessionChannel) {
 	exitStatus := &exitStatusPayload{}
-	if err := ssh.Unmarshal(request.Payload, exitStatus); err != nil {
+	if err := gossh.Unmarshal(request.Payload, exitStatus); err != nil {
 		s.logger.Debug(message.Wrap(err,
 			message.MSSHProxyExitStatusDecodeFailed, "Received exit status from backend, but failed to decode payload."))
 		if request.WantReply {
@@ -83,9 +85,9 @@ func (s *sshChannelHandler) handleExitStatusFromBackend(request *ssh.Request, se
 	}
 }
 
-func (s *sshChannelHandler) handleExitSignalFromBackend(request *ssh.Request, session sshserver.SessionChannel) {
+func (s *sshChannelHandler) handleExitSignalFromBackend(request *gossh.Request, session sshserver.SessionChannel) {
 	exitSignal := &exitSignalPayload{}
-	if err := ssh.Unmarshal(request.Payload, exitSignal); err != nil {
+	if err := gossh.Unmarshal(request.Payload, exitSignal); err != nil {
 		s.logger.Debug(message.Wrap(err,
 			message.MSSHProxyExitSignalDecodeFailed, "Received exit signal from backend, but failed to decode payload."))
 		if request.WantReply {
@@ -193,7 +195,7 @@ func (s *sshChannelHandler) OnFailedDecodeChannelRequest(
 func (s *sshChannelHandler) sendRequest(name string, payload interface{}) error {
 	var marshalledPayload []byte
 	if payload != nil {
-		marshalledPayload = ssh.Marshal(payload)
+		marshalledPayload = gossh.Marshal(payload)
 	}
 	success, err := s.backingChannel.SendRequest(name, true, marshalledPayload)
 	if err != nil {
@@ -267,7 +269,10 @@ func (s *sshChannelHandler) OnExecRequest(_ uint64, program string) error {
 	payload := execRequestPayload{
 		Exec: program,
 	}
+
+	s.logger.Debug(fmt.Sprintf("%+v", payload))
 	err := s.sendRequest("exec", payload)
+	s.logger.Debug(fmt.Sprintf("errerrerrerr：： %+v", err))
 	if err != nil {
 		return err
 	}
@@ -380,6 +385,10 @@ func (s *sshChannelHandler) OnX11Request(
 		Cookie:           cookie,
 		Screen:           screen,
 	}
+	if s.connectionHandler.reverseHandler == nil {
+		s.connectionHandler.reverseHandler = reverseHandler
+	}
+
 	if err := s.sendRequest("x11-req", payload); err != nil {
 		err := message.WrapUser(
 			err,
@@ -440,4 +449,8 @@ func (s *sshChannelHandler) OnShutdown(shutdownContext context.Context) {
 		s.lock.Unlock()
 	case <-s.done:
 	}
+}
+
+func (s *sshChannelHandler) Context() ssh.Context {
+	return s.session.Context()
 }

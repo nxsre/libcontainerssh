@@ -4,13 +4,15 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/gliderlabs/ssh"
 	"io"
+	"log"
 	"strings"
 
-    "go.containerssh.io/libcontainerssh/config"
-    "go.containerssh.io/libcontainerssh/internal/sshserver"
-    "go.containerssh.io/libcontainerssh/internal/unixutils"
-    "go.containerssh.io/libcontainerssh/message"
+	"go.containerssh.io/libcontainerssh/config"
+	"go.containerssh.io/libcontainerssh/internal/sshserver"
+	"go.containerssh.io/libcontainerssh/internal/unixutils"
+	"go.containerssh.io/libcontainerssh/message"
 )
 
 type channelHandler struct {
@@ -49,6 +51,7 @@ func (c *channelHandler) OnPtyRequest(
 	_ uint32,
 	_ []byte,
 ) error {
+	log.Println("docker OnPtyRequest")
 	c.networkHandler.mutex.Lock()
 	defer c.networkHandler.mutex.Unlock()
 	if c.exec != nil {
@@ -316,4 +319,8 @@ func (c *channelHandler) OnShutdown(shutdownContext context.Context) {
 		case <-c.exec.done():
 		}
 	}
+}
+
+func (c *channelHandler) Context() ssh.Context {
+	return c.session.Context()
 }

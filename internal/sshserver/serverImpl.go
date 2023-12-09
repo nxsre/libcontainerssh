@@ -4,10 +4,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/docker/docker/pkg/reexec"
+	"github.com/gliderlabs/ssh"
 	"io"
 	"net"
+	"os"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	protocol "go.containerssh.io/libcontainerssh/agentprotocol"
@@ -18,11 +22,11 @@ import (
 	messageCodes "go.containerssh.io/libcontainerssh/message"
 	"go.containerssh.io/libcontainerssh/metadata"
 	"go.containerssh.io/libcontainerssh/service"
-	"golang.org/x/crypto/ssh"
+	gossh "golang.org/x/crypto/ssh"
 )
 
 type connection struct {
-	sshConn         *ssh.ServerConn
+	sshConn         *gossh.ServerConn
 	reverseForwards map[string]*protocol.ForwardCtx
 }
 
@@ -33,17 +37,22 @@ type serverImpl struct {
 	listenSocket        net.Listener
 	wg                  *sync.WaitGroup
 	lock                *sync.Mutex
-	clientSockets       map[*ssh.ServerConn]bool
+	clientSockets       map[*gossh.ServerConn]bool
 	connMap             map[string]connection
 	nextGlobalRequestID uint64
 	nextChannelID       uint64
-	hostKeys            []ssh.Signer
+	hostKeys            []gossh.Signer
 	shutdownHandlers    *shutdownRegistry
 	shuttingDown        bool
+	configFile          string
 }
 
 func (s *serverImpl) String() string {
 	return "SSH server"
+}
+
+func (s *serverImpl) WaitGroup() *sync.WaitGroup {
+	return s.wg
 }
 
 func (s *serverImpl) RunWithLifecycle(lifecycle service.Lifecycle) error {
@@ -52,7 +61,7 @@ func (s *serverImpl) RunWithLifecycle(lifecycle service.Lifecycle) error {
 	if s.listenSocket != nil {
 		alreadyRunning = true
 	} else {
-		s.clientSockets = make(map[*ssh.ServerConn]bool)
+		s.clientSockets = make(map[*gossh.ServerConn]bool)
 		s.connMap = make(map[string]connection)
 	}
 	s.shuttingDown = false
@@ -85,6 +94,7 @@ func (s *serverImpl) RunWithLifecycle(lifecycle service.Lifecycle) error {
 		return err
 	}
 	lifecycle.Running()
+
 	s.logger.Info(messageCodes.NewMessage(messageCodes.MSSHServiceAvailable, "SSH server running on %s", s.cfg.Listen))
 
 	go s.handleListenSocketOnShutdown(lifecycle)
@@ -95,7 +105,42 @@ func (s *serverImpl) RunWithLifecycle(lifecycle service.Lifecycle) error {
 			break
 		}
 		s.wg.Add(1)
-		go s.handleConnection(tcpConn)
+		s.logger.Debug("处理连接:::", tcpConn.RemoteAddr().String())
+		// 这里 fork 子进程接管连接
+		//go s.HandleConnection(tcpConn)
+		go func() {
+			// 主进程
+			// 获取 TCP 连接的文件拷贝 f
+			var f *os.File
+			if f, err = tcpConn.(*net.TCPConn).File(); err != nil {
+				s.logger.Error("failed to obtain connection fd")
+			}
+			defer f.Close()
+			s.logger.Info("子命令执行")
+			cmdArgs := []string{"containerssh-worker", "--config", s.configFile}
+			s.logger.Info(cmdArgs)
+			cmd := reexec.Command(cmdArgs...)
+			cmd.Dir, _ = os.Getwd()
+			cmd.Env = os.Environ()
+			//cmd.Stdout = os.Stdout
+			//cmd.Stderr = os.Stderr
+			// Setsid 设为 true，在新的 session 中运行程序
+			cmd.SysProcAttr = &syscall.SysProcAttr{
+				Setsid: true,
+			}
+			// tcp 连接句柄传递给子进程
+			cmd.ExtraFiles = []*os.File{f}
+			//if err := cmd.Run(); err != nil {
+			//	fmt.Printf("Error running the reexec.Command - %s\n", err)
+			//}
+			bs, err := cmd.CombinedOutput()
+			if err != nil {
+				s.logger.Error(err)
+			}
+			s.logger.Info(string(bs))
+			s.wg.Done()
+			s.logger.Info("子命令执行完毕")
+		}()
 	}
 	lifecycle.Stopping()
 	s.shuttingDown = true
@@ -133,7 +178,7 @@ func (s *serverImpl) disconnectClients(lifecycle service.Lifecycle, allClientsEx
 	for serverSocket := range s.clientSockets {
 		_ = serverSocket.Close()
 	}
-	s.clientSockets = map[*ssh.ServerConn]bool{}
+	s.clientSockets = map[*gossh.ServerConn]bool{}
 	s.lock.Unlock()
 }
 
@@ -141,9 +186,9 @@ func (s *serverImpl) createPasswordAuthenticator(
 	connectionMetadata metadata.ConnectionMetadata,
 	handlerNetworkConnection NetworkConnectionHandler,
 	logger log.Logger,
-) func(conn ssh.ConnMetadata, password []byte) (*ssh.Permissions, metadata.ConnectionAuthenticatedMetadata, error) {
-	return func(conn ssh.ConnMetadata, password []byte) (
-		*ssh.Permissions,
+) func(conn gossh.ConnMetadata, password []byte) (*gossh.Permissions, metadata.ConnectionAuthenticatedMetadata, error) {
+	return func(conn gossh.ConnMetadata, password []byte) (
+		*gossh.Permissions,
 		metadata.ConnectionAuthenticatedMetadata,
 		error,
 	) {
@@ -152,11 +197,12 @@ func (s *serverImpl) createPasswordAuthenticator(
 			authenticatingMetadata,
 			password,
 		)
+
 		//goland:noinspection GoNilness
 		switch authResponse {
 		case AuthResponseSuccess:
 			s.logAuthSuccessful(logger, authenticatedMetadata, "Password")
-			return &ssh.Permissions{}, authenticatedMetadata, nil
+			return &gossh.Permissions{}, authenticatedMetadata, nil
 		case AuthResponseFailure:
 			err = s.wrapAndLogAuthFailure(logger, authenticatingMetadata, "Password", err)
 			return nil, authenticatedMetadata, err
@@ -242,18 +288,18 @@ func (s *serverImpl) createPubKeyAuthenticator(
 	connectionMetadata metadata.ConnectionMetadata,
 	handlerNetworkConnection NetworkConnectionHandler,
 	logger log.Logger,
-) func(conn ssh.ConnMetadata, pubKey ssh.PublicKey) (
-	*ssh.Permissions,
+) func(conn gossh.ConnMetadata, pubKey gossh.PublicKey) (
+	*gossh.Permissions,
 	metadata.ConnectionAuthenticatedMetadata,
 	error,
 ) {
-	return func(conn ssh.ConnMetadata, pubKey ssh.PublicKey) (
-		*ssh.Permissions,
+	return func(conn gossh.ConnMetadata, pubKey gossh.PublicKey) (
+		*gossh.Permissions,
 		metadata.ConnectionAuthenticatedMetadata,
 		error,
 	) {
 		authenticatingMetadata := connectionMetadata.StartAuthentication(string(conn.ClientVersion()), conn.User())
-		authorizedKey := strings.TrimSpace(string(ssh.MarshalAuthorizedKey(pubKey)))
+		authorizedKey := strings.TrimSpace(string(gossh.MarshalAuthorizedKey(pubKey)))
 		authResponse, authenticatedMetadata, err := handlerNetworkConnection.OnAuthPubKey(
 			authenticatingMetadata,
 			auth.PublicKey{PublicKey: authorizedKey},
@@ -262,7 +308,7 @@ func (s *serverImpl) createPubKeyAuthenticator(
 		switch authResponse {
 		case AuthResponseSuccess:
 			s.logAuthSuccessful(logger, authenticatedMetadata, "Public key")
-			return &ssh.Permissions{}, authenticatedMetadata, nil
+			return &gossh.Permissions{}, authenticatedMetadata, nil
 		case AuthResponseFailure:
 			err = s.wrapAndLogAuthFailure(logger, authenticatingMetadata, "Public key", err)
 			return nil, authenticatedMetadata, err
@@ -279,15 +325,15 @@ func (s *serverImpl) createKeyboardInteractiveHandler(
 	connectionMetadata metadata.ConnectionMetadata,
 	handlerNetworkConnection *networkConnectionWrapper,
 	logger log.Logger,
-) func(conn ssh.ConnMetadata, challenge ssh.KeyboardInteractiveChallenge) (
-	*ssh.Permissions,
+) func(conn gossh.ConnMetadata, challenge gossh.KeyboardInteractiveChallenge) (
+	*gossh.Permissions,
 	metadata.ConnectionAuthenticatedMetadata,
 	error,
 ) {
 	return func(
-		conn ssh.ConnMetadata,
-		challenge ssh.KeyboardInteractiveChallenge,
-	) (*ssh.Permissions, metadata.ConnectionAuthenticatedMetadata, error) {
+		conn gossh.ConnMetadata,
+		challenge gossh.KeyboardInteractiveChallenge,
+	) (*gossh.Permissions, metadata.ConnectionAuthenticatedMetadata, error) {
 		authenticatingMetadata := connectionMetadata.StartAuthentication(string(conn.ClientVersion()), conn.User())
 		challengeWrapper := func(
 			instruction string,
@@ -319,7 +365,7 @@ func (s *serverImpl) createKeyboardInteractiveHandler(
 		switch authResponse {
 		case AuthResponseSuccess:
 			s.logAuthSuccessful(logger, authenticatedMetadata, "Keyboard-interactive")
-			return &ssh.Permissions{}, authenticatedMetadata, nil
+			return &gossh.Permissions{}, authenticatedMetadata, nil
 		case AuthResponseFailure:
 			err = s.wrapAndLogAuthFailure(logger, authenticatingMetadata, "Keyboard-interactive", err)
 			return nil, authenticatedMetadata, err
@@ -335,15 +381,17 @@ func (s *serverImpl) createConfiguration(
 	meta metadata.ConnectionMetadata,
 	handlerNetworkConnection *networkConnectionWrapper,
 	logger log.Logger,
-) *ssh.ServerConfig {
+	ctx ssh.Context,
+) *gossh.ServerConfig {
 	passwordCallback, pubkeyCallback, keyboardInteractiveCallback, gssConfig := s.createAuthenticators(
 		meta,
 		handlerNetworkConnection,
 		logger,
+		ctx,
 	)
 
-	serverConfig := &ssh.ServerConfig{
-		Config: ssh.Config{
+	serverConfig := &gossh.ServerConfig{
+		Config: gossh.Config{
 			KeyExchanges: s.cfg.KexAlgorithms.StringList(),
 			Ciphers:      s.cfg.Ciphers.StringList(),
 			MACs:         s.cfg.MACs.StringList(),
@@ -355,7 +403,7 @@ func (s *serverImpl) createConfiguration(
 		KeyboardInteractiveCallback: keyboardInteractiveCallback,
 		GSSAPIWithMICConfig:         gssConfig,
 		ServerVersion:               s.cfg.ServerVersion.String(),
-		BannerCallback:              func(conn ssh.ConnMetadata) string { return s.cfg.Banner },
+		BannerCallback:              func(conn gossh.ConnMetadata) string { return s.cfg.Banner },
 	}
 	for _, key := range s.hostKeys {
 		serverConfig.AddHostKey(key)
@@ -367,15 +415,17 @@ func (s *serverImpl) createAuthenticators(
 	meta metadata.ConnectionMetadata,
 	handlerNetworkConnection *networkConnectionWrapper,
 	logger log.Logger,
+	ctx ssh.Context,
 ) (
-	func(conn ssh.ConnMetadata, password []byte) (*ssh.Permissions, error),
-	func(conn ssh.ConnMetadata, key ssh.PublicKey) (*ssh.Permissions, error),
-	func(conn ssh.ConnMetadata, challenge ssh.KeyboardInteractiveChallenge) (*ssh.Permissions, error),
-	*ssh.GSSAPIWithMICConfig,
+	func(conn gossh.ConnMetadata, password []byte) (*gossh.Permissions, error),
+	func(conn gossh.ConnMetadata, key gossh.PublicKey) (*gossh.Permissions, error),
+	func(conn gossh.ConnMetadata, challenge gossh.KeyboardInteractiveChallenge) (*gossh.Permissions, error),
+	*gossh.GSSAPIWithMICConfig,
 ) {
-	passwordCallback := s.createPasswordCallback(meta, handlerNetworkConnection, logger)
-	pubkeyCallback := s.createPubKeyCallback(meta, handlerNetworkConnection, logger)
-	keyboardInteractiveCallback := s.createKeyboardInteractiveCallback(meta, handlerNetworkConnection, logger)
+
+	passwordCallback := s.createPasswordCallback(meta, handlerNetworkConnection, logger, ctx)
+	pubkeyCallback := s.createPubKeyCallback(meta, handlerNetworkConnection, logger, ctx)
+	keyboardInteractiveCallback := s.createKeyboardInteractiveCallback(meta, handlerNetworkConnection, logger, ctx)
 	gssConfig := s.createGSSAPIConfig(meta, handlerNetworkConnection, logger)
 	return passwordCallback, pubkeyCallback, keyboardInteractiveCallback, gssConfig
 }
@@ -384,13 +434,13 @@ func (s *serverImpl) createGSSAPIConfig(
 	connectionMetadata metadata.ConnectionMetadata,
 	handlerNetworkConnection *networkConnectionWrapper,
 	logger log.Logger,
-) *ssh.GSSAPIWithMICConfig {
-	var gssConfig *ssh.GSSAPIWithMICConfig
+) *gossh.GSSAPIWithMICConfig {
+	var gssConfig *gossh.GSSAPIWithMICConfig
 
 	gssServer := handlerNetworkConnection.OnAuthGSSAPI(connectionMetadata)
 	if gssServer != nil {
-		gssConfig = &ssh.GSSAPIWithMICConfig{
-			AllowLogin: func(conn ssh.ConnMetadata, srcName string) (*ssh.Permissions, error) {
+		gssConfig = &gossh.GSSAPIWithMICConfig{
+			AllowLogin: func(conn gossh.ConnMetadata, srcName string) (*gossh.Permissions, error) {
 				if !gssServer.Success() {
 					if gssServer.Error() == nil {
 						return nil, messageCodes.NewMessage(
@@ -410,6 +460,7 @@ func (s *serverImpl) createGSSAPIConfig(
 				s.logAuthSuccessful(logger, authenticated, "GSSAPI")
 				sshConnectionHandler, _, err := handlerNetworkConnection.OnHandshakeSuccess(
 					authenticated,
+					nil,
 				)
 				if err != nil {
 					err = messageCodes.WrapUser(
@@ -422,7 +473,7 @@ func (s *serverImpl) createGSSAPIConfig(
 					return nil, err
 				}
 				handlerNetworkConnection.sshConnectionHandler = sshConnectionHandler
-				return &ssh.Permissions{}, nil
+				return &gossh.Permissions{}, nil
 			},
 			Server: gssServer,
 		}
@@ -434,16 +485,17 @@ func (s *serverImpl) createKeyboardInteractiveCallback(
 	connectionMetadata metadata.ConnectionMetadata,
 	handlerNetworkConnection *networkConnectionWrapper,
 	logger log.Logger,
-) func(conn ssh.ConnMetadata, challenge ssh.KeyboardInteractiveChallenge) (*ssh.Permissions, error) {
+	ctx ssh.Context,
+) func(conn gossh.ConnMetadata, challenge gossh.KeyboardInteractiveChallenge) (*gossh.Permissions, error) {
 	keyboardInteractiveHandler := s.createKeyboardInteractiveHandler(
 		connectionMetadata,
 		handlerNetworkConnection,
 		logger,
 	)
 	keyboardInteractiveCallback := func(
-		conn ssh.ConnMetadata,
-		challenge ssh.KeyboardInteractiveChallenge,
-	) (*ssh.Permissions, error) {
+		conn gossh.ConnMetadata,
+		challenge gossh.KeyboardInteractiveChallenge,
+	) (*gossh.Permissions, error) {
 		permissions, authenticatedMetadata, err := keyboardInteractiveHandler(conn, challenge)
 		if err != nil {
 			return permissions, err
@@ -451,6 +503,7 @@ func (s *serverImpl) createKeyboardInteractiveCallback(
 		// HACK: check HACKS.md "OnHandshakeSuccess conformanceTestHandler"
 		sshConnectionHandler, _, err := handlerNetworkConnection.OnHandshakeSuccess(
 			authenticatedMetadata,
+			ctx,
 		)
 		if err != nil {
 			err = messageCodes.WrapUser(
@@ -473,9 +526,10 @@ func (s *serverImpl) createPubKeyCallback(
 	meta metadata.ConnectionMetadata,
 	handlerNetworkConnection *networkConnectionWrapper,
 	logger log.Logger,
-) func(conn ssh.ConnMetadata, key ssh.PublicKey) (*ssh.Permissions, error) {
+	ctx ssh.Context,
+) func(conn gossh.ConnMetadata, key gossh.PublicKey) (*gossh.Permissions, error) {
 	pubKeyHandler := s.createPubKeyAuthenticator(meta, handlerNetworkConnection, logger)
-	pubkeyCallback := func(conn ssh.ConnMetadata, key ssh.PublicKey) (*ssh.Permissions, error) {
+	pubkeyCallback := func(conn gossh.ConnMetadata, key gossh.PublicKey) (*gossh.Permissions, error) {
 		permissions, authenticatedMetadata, err := pubKeyHandler(conn, key)
 		if err != nil {
 			return permissions, err
@@ -483,6 +537,7 @@ func (s *serverImpl) createPubKeyCallback(
 		// HACK: check HACKS.md "OnHandshakeSuccess conformanceTestHandler"
 		sshConnectionHandler, _, err := handlerNetworkConnection.OnHandshakeSuccess(
 			authenticatedMetadata,
+			ctx,
 		)
 		if err != nil {
 			err = messageCodes.WrapUser(
@@ -505,9 +560,10 @@ func (s *serverImpl) createPasswordCallback(
 	meta metadata.ConnectionMetadata,
 	handlerNetworkConnection *networkConnectionWrapper,
 	logger log.Logger,
-) func(conn ssh.ConnMetadata, password []byte) (*ssh.Permissions, error) {
+	ctx ssh.Context,
+) func(conn gossh.ConnMetadata, password []byte) (*gossh.Permissions, error) {
 	passwordHandler := s.createPasswordAuthenticator(meta, handlerNetworkConnection, logger)
-	passwordCallback := func(conn ssh.ConnMetadata, password []byte) (*ssh.Permissions, error) {
+	passwordCallback := func(conn gossh.ConnMetadata, password []byte) (*gossh.Permissions, error) {
 		permissions, authenticatedMetadata, err := passwordHandler(conn, password)
 		if err != nil {
 			return permissions, err
@@ -515,6 +571,7 @@ func (s *serverImpl) createPasswordCallback(
 		// HACK: check HACKS.md "OnHandshakeSuccess conformanceTestHandler"
 		sshConnectionHandler, _, err := handlerNetworkConnection.OnHandshakeSuccess(
 			authenticatedMetadata,
+			ctx,
 		)
 		if err != nil {
 			err = messageCodes.WrapUser(
@@ -533,7 +590,7 @@ func (s *serverImpl) createPasswordCallback(
 	return passwordCallback
 }
 
-func (s *serverImpl) handleConnection(conn net.Conn) {
+func (s *serverImpl) HandleConnection(conn net.Conn) {
 	addr := conn.RemoteAddr().(*net.TCPAddr)
 	connectionID := GenerateConnectionID()
 	logger := s.logger.
@@ -563,37 +620,58 @@ func (s *serverImpl) handleConnection(conn net.Conn) {
 		),
 	)
 
+	// 初始化 ssh.Conetxt ,用来传递连接上下文，ctx 通过 OnHandshakeSuccess 方法进行设置
+	ctx, _ := newContext(s)
+
+	ctx.SetValue(ContextKeyConnectionID, connectionID)
 	// HACK: check HACKS.md "OnHandshakeSuccess conformanceTestHandler"
 	wrapper := networkConnectionWrapper{
 		NetworkConnectionHandler: handlerNetworkConnection,
+		ctx:                      ctx,
 	}
 
-	sshConn, channels, globalRequests, err := ssh.NewServerConn(
+	// 初始化当前连接的配置（包括身份验证等）
+	sshConn, channels, globalRequests, err := gossh.NewServerConn(
 		conn,
-		s.createConfiguration(connectionMeta, &wrapper, logger),
+		s.createConfiguration(connectionMeta, &wrapper, logger, ctx),
 	)
+
 	if err != nil {
 		logger.Info(messageCodes.Wrap(err, messageCodes.ESSHHandshakeFailed, "SSH handshake failed"))
 		handlerNetworkConnection.OnHandshakeFailed(connectionMeta, err)
 		s.shutdownHandlers.Unregister(shutdownHandlerID)
 		logger.Debug(messageCodes.NewMessage(messageCodes.MSSHDisconnected, "Client disconnected"))
 		handlerNetworkConnection.OnDisconnect()
+		logger.Debug("客户端关闭")
 		_ = conn.Close()
 		s.wg.Done()
 		return
 	}
+
 	authenticatedMetadata := wrapper.authenticatedMetadata
 	logger = logger.WithLabel("username", sshConn.User())
-	logger.Debug(messageCodes.NewMessage(messageCodes.MSSHHandshakeSuccessful, "SSH handshake successful"))
+	logger.Debug(authenticatedMetadata.Username, wrapper.authenticatedMetadata.RemoteAddress.String())
+	logger.Debug(messageCodes.NewMessage(messageCodes.MSSHHandshakeSuccessful, "SSH handshake successful xxxsshd 888---"))
+	if s.clientSockets == nil {
+		s.clientSockets = map[*gossh.ServerConn]bool{}
+	}
+
+	if s.connMap == nil {
+		s.connMap = map[string]connection{}
+	}
+
 	s.lock.Lock()
 	s.clientSockets[sshConn] = true
 	s.connMap[connectionID] = connection{
 		sshConn:         sshConn,
 		reverseForwards: make(map[string]*protocol.ForwardCtx),
 	}
+
+	applyConnMetadata(ctx, sshConn)
+
 	sshShutdownHandlerID := fmt.Sprintf("ssh-%s", connectionID)
 	s.lock.Unlock()
-
+	logger.Info("登录成功")
 	if s.cfg.ClientAliveInterval > 0 {
 		go func() {
 			missedAlives := 0
@@ -613,6 +691,8 @@ func (s *serverImpl) handleConnection(conn net.Conn) {
 						),
 					)
 					if missedAlives >= s.cfg.ClientAliveCountMax {
+						s.logger.Error(fmt.Sprintf("connId: %s   心跳失败 %d 次", connectionID, missedAlives))
+						time.Sleep(15 * time.Second)
 						_ = sshConn.Close()
 						break
 					}
@@ -624,8 +704,11 @@ func (s *serverImpl) handleConnection(conn net.Conn) {
 	}
 
 	go func() {
-		_ = sshConn.Wait()
-		logger.Debug(messageCodes.NewMessage(messageCodes.MSSHDisconnected, "Client disconnected"))
+		err := sshConn.Wait()
+		if err != nil {
+			logger.Error(err)
+		}
+		logger.Debug(messageCodes.NewMessage(messageCodes.MSSHDisconnected, "Client disconnected 000"))
 		s.shutdownHandlers.Unregister(shutdownHandlerID)
 		s.shutdownHandlers.Unregister(sshShutdownHandlerID)
 		handlerNetworkConnection.OnDisconnect()
@@ -635,11 +718,11 @@ func (s *serverImpl) handleConnection(conn net.Conn) {
 	handlerSSHConnection := wrapper.sshConnectionHandler
 	s.shutdownHandlers.Register(sshShutdownHandlerID, handlerSSHConnection)
 
-	go s.handleChannels(authenticatedMetadata, channels, handlerSSHConnection, logger)
-	go s.handleGlobalRequests(authenticatedMetadata, globalRequests, handlerSSHConnection, logger)
+	go s.handleChannels(authenticatedMetadata, channels, handlerSSHConnection, logger, ctx)
+	go s.handleGlobalRequests(authenticatedMetadata, globalRequests, handlerSSHConnection, logger, ctx)
 }
 
-func (s *serverImpl) handleKeepAliveRequest(req *ssh.Request, logger log.Logger) {
+func (s *serverImpl) handleKeepAliveRequest(req *gossh.Request, logger log.Logger) {
 	if req.WantReply {
 		if err := req.Reply(false, []byte{}); err != nil {
 			logger.Debug(
@@ -655,7 +738,7 @@ func (s *serverImpl) handleKeepAliveRequest(req *ssh.Request, logger log.Logger)
 }
 
 //nolint:dupl
-func (s *serverImpl) handleGlobalRequest(authenticatedMetadata metadata.ConnectionAuthenticatedMetadata, requestID uint64, connection SSHConnectionHandler, req *ssh.Request, logger log.Logger) {
+func (s *serverImpl) handleGlobalRequest(authenticatedMetadata metadata.ConnectionAuthenticatedMetadata, requestID uint64, connection SSHConnectionHandler, req *gossh.Request, logger log.Logger, ctx ssh.Context) {
 	reply := s.createReply(req, logger)
 	payload, err := s.unmarshalGlobalRequestPayload(req)
 	if payload == nil {
@@ -731,7 +814,7 @@ func (s *serverImpl) handleDecodedGlobalRequest(
 	return nil
 }
 
-func (s *serverImpl) handleUnknownGlobalRequest(req *ssh.Request, requestID uint64, connection SSHConnectionHandler, logger log.Logger) {
+func (s *serverImpl) handleUnknownGlobalRequest(req *gossh.Request, requestID uint64, connection SSHConnectionHandler, logger log.Logger) {
 	logger.Debug(
 		messageCodes.NewMessage(messageCodes.ESSHUnsupportedGlobalRequest, "Unsupported global request").Label(
 			"type",
@@ -756,9 +839,10 @@ func (s *serverImpl) handleUnknownGlobalRequest(req *ssh.Request, requestID uint
 
 func (s *serverImpl) handleGlobalRequests(
 	authenticatedMetadata metadata.ConnectionAuthenticatedMetadata,
-	requests <-chan *ssh.Request,
+	requests <-chan *gossh.Request,
 	connection SSHConnectionHandler,
 	logger log.Logger,
+	ctx ssh.Context,
 ) {
 	for {
 		request, ok := <-requests
@@ -774,16 +858,17 @@ func (s *serverImpl) handleGlobalRequests(
 			s.handleKeepAliveRequest(request, logger)
 		default:
 			logger.Debug("Handling global request %s", request.Type)
-			s.handleGlobalRequest(authenticatedMetadata, requestID, connection, request, logger)
+			s.handleGlobalRequest(authenticatedMetadata, requestID, connection, request, logger, ctx)
 		}
 	}
 }
 
 func (s *serverImpl) handleChannels(
 	authenticatedMetadata metadata.ConnectionAuthenticatedMetadata,
-	channels <-chan ssh.NewChannel,
+	channels <-chan gossh.NewChannel,
 	connection SSHConnectionHandler,
 	logger log.Logger,
+	ctx ssh.Context,
 ) {
 	for {
 		newChannel, ok := <-channels
@@ -797,11 +882,11 @@ func (s *serverImpl) handleChannels(
 		logger = logger.WithLabel("channelId", channelID)
 		switch newChannel.ChannelType() {
 		case ChannelTypeSession:
-			go s.handleSessionChannel(authenticatedMetadata.Channel(channelID), newChannel, connection, logger)
+			go s.handleSessionChannel(authenticatedMetadata.Channel(channelID), newChannel, connection, logger, ctx)
 		case ChannelTypeDirectTCPIP:
-			go s.handleDirectForwardingChannel(authenticatedMetadata.Channel(channelID), newChannel, connection, logger)
+			go s.handleDirectForwardingChannel(authenticatedMetadata.Channel(channelID), newChannel, connection, logger, ctx)
 		case ChannelTypeDirectStreamLocal:
-			go s.handleDirectStreamLocalChannel(authenticatedMetadata.Channel(channelID), newChannel, connection, logger)
+			go s.handleDirectStreamLocalChannel(authenticatedMetadata.Channel(channelID), newChannel, connection, logger, ctx)
 		default:
 			logger.Debug(
 				messageCodes.NewMessage(
@@ -810,7 +895,7 @@ func (s *serverImpl) handleChannels(
 				).Label("type", newChannel.ChannelType()),
 			)
 			connection.OnUnsupportedChannel(channelID, newChannel.ChannelType(), newChannel.ExtraData())
-			if err := newChannel.Reject(ssh.UnknownChannelType, "unsupported channel type"); err != nil {
+			if err := newChannel.Reject(gossh.UnknownChannelType, "unsupported channel type"); err != nil {
 				logger.Debug("failed to send channel rejection for channel type %s", newChannel.ChannelType())
 			}
 			continue
@@ -820,13 +905,15 @@ func (s *serverImpl) handleChannels(
 
 func (s *serverImpl) handleSessionChannel(
 	channelMetadata metadata.ChannelMetadata,
-	newChannel ssh.NewChannel,
+	newChannel gossh.NewChannel,
 	connection SSHConnectionHandler,
 	logger log.Logger,
+	ctx ssh.Context,
 ) {
 	channelCallbacks := &channelWrapper{
 		logger: logger,
 		lock:   &sync.Mutex{},
+		ctx:    ctx,
 	}
 	handlerChannel, rejection := connection.OnSessionChannel(channelMetadata, newChannel.ExtraData(), channelCallbacks)
 	if rejection != nil {
@@ -866,6 +953,7 @@ func (s *serverImpl) handleSessionChannel(
 			handlerChannel.OnClose()
 			break
 		}
+		s.logger.Debug("requestrequestrequestrequest", request.Type, request.WantReply, ok)
 		requestID := nextRequestID
 		nextRequestID++
 		s.handleChannelRequest(channelMetadata, requestID, request, handlerChannel, logger)
@@ -875,7 +963,7 @@ func (s *serverImpl) handleSessionChannel(
 func serveConnection(log log.Logger, dst io.WriteCloser, src io.ReadCloser) {
 	_, err := io.Copy(dst, src)
 	if err != nil && !errors.Is(err, io.EOF) {
-		log.Warning("Connection error", err)
+		log.Warning("3333 Connection error", err)
 	}
 	_ = dst.Close()
 	_ = src.Close()
@@ -883,12 +971,13 @@ func serveConnection(log log.Logger, dst io.WriteCloser, src io.ReadCloser) {
 
 func (s *serverImpl) handleDirectForwardingChannel(
 	channelMetadata metadata.ChannelMetadata,
-	newChannel ssh.NewChannel,
+	newChannel gossh.NewChannel,
 	connection SSHConnectionHandler,
 	logger log.Logger,
+	ctx ssh.Context,
 ) {
 	var payload ssh2.ForwardTCPChannelOpenPayload
-	err := ssh.Unmarshal(newChannel.ExtraData(), &payload)
+	err := gossh.Unmarshal(newChannel.ExtraData(), &payload)
 	if err != nil {
 		logger.Warning(
 			messageCodes.Wrap(
@@ -943,12 +1032,13 @@ func (s *serverImpl) handleDirectForwardingChannel(
 
 func (s *serverImpl) handleDirectStreamLocalChannel(
 	channelMetadata metadata.ChannelMetadata,
-	newChannel ssh.NewChannel,
+	newChannel gossh.NewChannel,
 	connection SSHConnectionHandler,
 	logger log.Logger,
+	ctx ssh.Context,
 ) {
 	var payload ssh2.DirectStreamLocalChannelOpenPayload
-	err := ssh.Unmarshal(newChannel.ExtraData(), &payload)
+	err := gossh.Unmarshal(newChannel.ExtraData(), &payload)
 	if err != nil {
 		logger.Warning(
 			messageCodes.Wrap(
@@ -1001,51 +1091,51 @@ func (s *serverImpl) handleDirectStreamLocalChannel(
 	}
 }
 
-func (s *serverImpl) unmarshalEnv(request *ssh.Request) (payload ssh2.EnvRequestPayload, err error) {
-	return payload, ssh.Unmarshal(request.Payload, &payload)
+func (s *serverImpl) unmarshalEnv(request *gossh.Request) (payload ssh2.EnvRequestPayload, err error) {
+	return payload, gossh.Unmarshal(request.Payload, &payload)
 }
 
-func (s *serverImpl) unmarshalPty(request *ssh.Request) (payload ssh2.PtyRequestPayload, err error) {
-	return payload, ssh.Unmarshal(request.Payload, &payload)
+func (s *serverImpl) unmarshalPty(request *gossh.Request) (payload ssh2.PtyRequestPayload, err error) {
+	return payload, gossh.Unmarshal(request.Payload, &payload)
 }
 
-func (s *serverImpl) unmarshalShell(request *ssh.Request) (payload ssh2.ShellRequestPayload, err error) {
+func (s *serverImpl) unmarshalShell(request *gossh.Request) (payload ssh2.ShellRequestPayload, err error) {
 	if len(request.Payload) != 0 {
-		err = ssh.Unmarshal(request.Payload, &payload)
+		err = gossh.Unmarshal(request.Payload, &payload)
 	}
 	return payload, err
 }
 
-func (s *serverImpl) unmarshalExec(request *ssh.Request) (payload ssh2.ExecRequestPayload, err error) {
-	return payload, ssh.Unmarshal(request.Payload, &payload)
+func (s *serverImpl) unmarshalExec(request *gossh.Request) (payload ssh2.ExecRequestPayload, err error) {
+	return payload, gossh.Unmarshal(request.Payload, &payload)
 }
 
-func (s *serverImpl) unmarshalSubsystem(request *ssh.Request) (payload ssh2.SubsystemRequestPayload, err error) {
-	return payload, ssh.Unmarshal(request.Payload, &payload)
+func (s *serverImpl) unmarshalSubsystem(request *gossh.Request) (payload ssh2.SubsystemRequestPayload, err error) {
+	return payload, gossh.Unmarshal(request.Payload, &payload)
 }
 
-func (s *serverImpl) unmarshalWindow(request *ssh.Request) (payload ssh2.WindowRequestPayload, err error) {
-	return payload, ssh.Unmarshal(request.Payload, &payload)
+func (s *serverImpl) unmarshalWindow(request *gossh.Request) (payload ssh2.WindowRequestPayload, err error) {
+	return payload, gossh.Unmarshal(request.Payload, &payload)
 }
 
-func (s *serverImpl) unmarshalSignal(request *ssh.Request) (payload ssh2.SignalRequestPayload, err error) {
-	return payload, ssh.Unmarshal(request.Payload, &payload)
+func (s *serverImpl) unmarshalSignal(request *gossh.Request) (payload ssh2.SignalRequestPayload, err error) {
+	return payload, gossh.Unmarshal(request.Payload, &payload)
 }
 
-func (s *serverImpl) unmarshalTCPIPForward(request *ssh.Request) (payload ssh2.ForwardTCPIPRequestPayload, err error) {
-	return payload, ssh.Unmarshal(request.Payload, &payload)
+func (s *serverImpl) unmarshalTCPIPForward(request *gossh.Request) (payload ssh2.ForwardTCPIPRequestPayload, err error) {
+	return payload, gossh.Unmarshal(request.Payload, &payload)
 }
 
-func (s *serverImpl) unmarshalStreamLocalForward(request *ssh.Request) (payload ssh2.StreamLocalForwardRequestPayload, err error) {
+func (s *serverImpl) unmarshalStreamLocalForward(request *gossh.Request) (payload ssh2.StreamLocalForwardRequestPayload, err error) {
 	s.logger.Debug("Unmarshalling streamlocal: %+v", request.Payload)
-	return payload, ssh.Unmarshal(request.Payload, &payload)
+	return payload, gossh.Unmarshal(request.Payload, &payload)
 }
 
-func (s *serverImpl) unmarshalX11(request *ssh.Request) (payload ssh2.X11RequestPayload, err error) {
-	return payload, ssh.Unmarshal(request.Payload, &payload)
+func (s *serverImpl) unmarshalX11(request *gossh.Request) (payload ssh2.X11RequestPayload, err error) {
+	return payload, gossh.Unmarshal(request.Payload, &payload)
 }
 
-func (s *serverImpl) unmarshalChannelRequestPayload(request *ssh.Request) (payload interface{}, err error) {
+func (s *serverImpl) unmarshalChannelRequestPayload(request *gossh.Request) (payload interface{}, err error) {
 	switch ssh2.RequestType(request.Type) {
 	case ssh2.RequestTypeEnv:
 		return s.unmarshalEnv(request)
@@ -1068,7 +1158,7 @@ func (s *serverImpl) unmarshalChannelRequestPayload(request *ssh.Request) (paylo
 	}
 }
 
-func (s *serverImpl) unmarshalGlobalRequestPayload(request *ssh.Request) (payload interface{}, err error) {
+func (s *serverImpl) unmarshalGlobalRequestPayload(request *gossh.Request) (payload interface{}, err error) {
 	switch ssh2.RequestType(request.Type) {
 	case ssh2.RequestTypeReverseForward:
 		return s.unmarshalTCPIPForward(request)
@@ -1087,10 +1177,11 @@ func (s *serverImpl) unmarshalGlobalRequestPayload(request *ssh.Request) (payloa
 func (s *serverImpl) handleChannelRequest(
 	channelMetadata metadata.ChannelMetadata,
 	requestID uint64,
-	request *ssh.Request,
+	request *gossh.Request,
 	sessionChannel SessionChannelHandler,
 	logger log.Logger,
 ) {
+	logger.Debug("handleChannelRequesthandleChannelRequest", request.Type)
 	reply := s.createReply(request, logger)
 	payload, err := s.unmarshalChannelRequestPayload(request)
 	if payload == nil {
@@ -1130,6 +1221,7 @@ func (s *serverImpl) handleChannelRequest(
 				messageCodes.MSSHChannelRequestFailed,
 				"%s channel request from client failed",
 				request.Type,
+				err,
 			).Label("RequestType", request.Type),
 		)
 		reply(false, err.Error(), err)
@@ -1145,7 +1237,7 @@ func (s *serverImpl) handleChannelRequest(
 	reply(true, "", nil)
 }
 
-func (s *serverImpl) createReply(request *ssh.Request, logger log.Logger) func(
+func (s *serverImpl) createReply(request *gossh.Request, logger log.Logger) func(
 	success bool,
 	message string,
 	reason error,
@@ -1155,7 +1247,7 @@ func (s *serverImpl) createReply(request *ssh.Request, logger log.Logger) func(
 			if err := request.Reply(
 				success,
 				[]byte(message),
-			); err != nil {
+			); err != nil && err != io.EOF {
 				logger.Debug(
 					messageCodes.Wrap(
 						err,
@@ -1176,6 +1268,7 @@ func (s *serverImpl) handleDecodedChannelRequest(
 	payload interface{},
 	sessionChannel SessionChannelHandler,
 ) error {
+	s.logger.Debug("requestTyperequestTyperequestType", requestType)
 	switch requestType {
 	case ssh2.RequestTypeEnv:
 		return s.onEnvRequest(requestID, sessionChannel, payload)
@@ -1314,6 +1407,7 @@ func (s *serverImpl) onX11(connectionID string, requestID uint64, sessionChannel
 
 	reverseForwardHandler := ReverseForwardHandler{
 		sshConn: conn.sshConn,
+		server:  s,
 		logger:  s.logger,
 	}
 	err := sessionChannel.OnX11Request(requestID, x11.SingleConnection, x11.Protocol, x11.Cookie, x11.Screen, &reverseForwardHandler)

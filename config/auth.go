@@ -11,6 +11,7 @@ import (
 
 // AuthConfig is the configuration of the authentication client.
 type AuthConfig struct {
+	Passthrough bool `json:"passthrough" yaml:"passthrough"`
 	// PasswordAuth configures how users are authenticated with passwords. If not set, password authentication is
 	// disabled.
 	PasswordAuth PasswordAuthConfig `json:"password" yaml:"password"`
@@ -192,7 +193,7 @@ type AuthMethod string
 
 // Validate checks if the provided method is valid or not.
 func (m AuthMethod) Validate() error {
-	if m == "webhook" || m == "oauth2" || m == "kerberos" {
+	if m == "webhook" || m == "oauth2" || m == "kerberos" || m == "pam" {
 		return nil
 	}
 	return fmt.Errorf("invalid value for method: %s", m)
@@ -210,6 +211,14 @@ const AuthMethodOAuth2 AuthMethod = "oauth2"
 // AuthMethodKerberos authenticates using the Kerberos method.
 const AuthMethodKerberos AuthMethod = "kerberos"
 
+// AuthMethodLocal authenticates using the Kerberos method.
+const AuthMethodLocal AuthMethod = "local"
+
+// const AuthMethodPAM AuthMethod = "pam" authenticates using the pam method.
+const AuthMethodPAM = "pam"
+
+const AuthMethodPassThrough = "passthrough"
+
 // endregion
 
 // region PasswordAuth
@@ -224,6 +233,11 @@ type PasswordAuthConfig struct {
 
 	// Kerberos configures the Kerberos authenticator for password authentication.
 	Kerberos AuthKerberosClientConfig `json:"kerberos" yaml:"kerberos"`
+
+	// Kerberos configures the Kerberos authenticator for password authentication.
+	PAM AuthPAMClientConfig `json:"pam" yaml:"pam"`
+
+	PassThrough AuthPassThroughClientConfig `json:"passthrough" yaml:"passthrough"`
 }
 
 // Validate checks the password configuration structure for misconfiguration.
@@ -238,6 +252,10 @@ func (c PasswordAuthConfig) Validate() error {
 		return c.Webhook.Validate()
 	case PasswordAuthMethodKerberos:
 		return c.Kerberos.Validate()
+	case PasswordAuthMethodPAM:
+		return c.PAM.Validate()
+	case AuthMethodPassThrough:
+		return nil
 	default:
 		return fmt.Errorf("BUG: unsupported password authenticator: %s", c.Method)
 	}
@@ -248,7 +266,7 @@ type PasswordAuthMethod string
 
 // Validate checks if the provided method is valid or not.
 func (m PasswordAuthMethod) Validate() error {
-	if m == PasswordAuthMethodDisabled || m == PasswordAuthMethodWebhook || m == PasswordAuthMethodKerberos {
+	if m == PasswordAuthMethodDisabled || m == PasswordAuthMethodWebhook || m == PasswordAuthMethodKerberos || m == PasswordAuthMethodPAM || m == AuthMethodPassThrough {
 		return nil
 	}
 	return fmt.Errorf("invalid value for method: %s", m)
@@ -263,6 +281,12 @@ const PasswordAuthMethodWebhook PasswordAuthMethod = PasswordAuthMethod(AuthMeth
 // PasswordAuthMethodKerberos authenticates passwords using Kerberos.
 const PasswordAuthMethodKerberos PasswordAuthMethod = PasswordAuthMethod(AuthMethodKerberos)
 
+// PasswordAuthMethodPAM authenticates passwords using pam.
+const PasswordAuthMethodPAM PasswordAuthMethod = PasswordAuthMethod(AuthMethodPAM)
+
+// PasswordAuthMethodPassThrough authenticates passwords using passthrough.
+const PasswordAuthMethodPassThrough PasswordAuthMethod = PasswordAuthMethod(AuthMethodPassThrough)
+
 // endregion
 
 // region PubKeyAuth
@@ -274,6 +298,11 @@ type PublicKeyAuthConfig struct {
 
 	// Webhook configures the webhook authenticator for public key authentication.
 	Webhook AuthWebhookClientConfig `json:"webhook" yaml:"webhook"`
+
+	// Local configures the local authenticator for public key authentication.
+	Local LocalConfig `json:"local" yaml:"local"`
+
+	PassThrough AuthPassThroughClientConfig `json:"passthrough" yaml:"passthrough"`
 }
 
 func (c PublicKeyAuthConfig) Validate() error {
@@ -285,6 +314,10 @@ func (c PublicKeyAuthConfig) Validate() error {
 		return nil
 	case PubKeyAuthMethodWebhook:
 		return c.Webhook.Validate()
+	case PubKeyAuthMethodLocal:
+		return nil
+	case PubKeyAuthMethodPassThrough:
+		return nil
 	default:
 		return fmt.Errorf("BUG: unsupported public key authenticator: %s", c.Method)
 	}
@@ -295,7 +328,7 @@ type PublicKeyAuthMethod string
 
 // Validate checks if the provided method is valid or not.
 func (m PublicKeyAuthMethod) Validate() error {
-	if m == PubKeyAuthMethodDisabled || m == PubKeyAuthMethodWebhook {
+	if m == PubKeyAuthMethodDisabled || m == PubKeyAuthMethodWebhook || m == PubKeyAuthMethodLocal || m == PubKeyAuthMethodPassThrough {
 		return nil
 	}
 	return fmt.Errorf("invalid value for method: %s", m)
@@ -306,6 +339,12 @@ const PubKeyAuthMethodDisabled PublicKeyAuthMethod = PublicKeyAuthMethod(AuthMet
 
 // PubKeyAuthMethodWebhook authenticates using an HTTP webhook.
 const PubKeyAuthMethodWebhook PublicKeyAuthMethod = PublicKeyAuthMethod(AuthMethodWebhook)
+
+// PubKeyAuthMethodLocal authenticates using an HTTP webhook.
+const PubKeyAuthMethodLocal PublicKeyAuthMethod = PublicKeyAuthMethod(AuthMethodLocal)
+
+// PubKeyAuthMethodPassThrough authenticates using an PassThrough webhook.
+const PubKeyAuthMethodPassThrough PublicKeyAuthMethod = PublicKeyAuthMethod(AuthMethodPassThrough)
 
 // endregion
 
@@ -749,6 +788,30 @@ func (k *AuthKerberosClientConfig) Validate() error {
 	if _, err := os.Stat(k.Keytab); err != nil {
 		return wrapWithMessage(err, "keytab file %s does not exist or is inaccessible", k.Keytab)
 	}
+	return nil
+}
+
+// endregion
+
+// region pam
+
+// AuthPAMClientConfig is the configuration for the pam authentication method.
+type AuthPAMClientConfig struct {
+}
+
+func (k *AuthPAMClientConfig) Validate() error {
+	return nil
+}
+
+// endregion
+
+// region passthrough
+
+// AuthPassThroughClientConfig is the configuration for the passthrough authentication method.
+type AuthPassThroughClientConfig struct {
+}
+
+func (k *AuthPassThroughClientConfig) Validate() error {
 	return nil
 }
 

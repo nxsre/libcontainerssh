@@ -3,6 +3,8 @@ package metricsintegration_test
 import (
 	"context"
 	"fmt"
+	"github.com/gliderlabs/ssh"
+	gossh "golang.org/x/crypto/ssh"
 	"net"
 	"testing"
 
@@ -16,8 +18,6 @@ import (
 	"go.containerssh.io/libcontainerssh/internal/sshserver"
 	"go.containerssh.io/libcontainerssh/message"
 	"go.containerssh.io/libcontainerssh/metadata"
-
-	"golang.org/x/crypto/ssh"
 )
 
 func TestMetricsReporting(t *testing.T) {
@@ -136,6 +136,7 @@ func testAuthFailed(
 
 type dummyBackendHandler struct {
 	authResponse sshserver.AuthResponse
+	ctx          ssh.Context
 }
 
 func (d *dummyBackendHandler) OnClose() {
@@ -156,6 +157,10 @@ func (d *dummyBackendHandler) OnNetworkConnection(
 }
 
 func (d *dummyBackendHandler) OnDisconnect() {
+}
+
+func (d *dummyBackendHandler) Context() ssh.Context {
+	return d.ctx
 }
 
 func (d *dummyBackendHandler) OnAuthPassword(meta metadata.ConnectionAuthPendingMetadata, _ []byte) (
@@ -242,7 +247,7 @@ func (s *dummyBackendHandler) OnTCPForwardChannel(
 	originatorHost string,
 	originatorPort uint32,
 ) (channel sshserver.ForwardChannel, failureReason sshserver.ChannelRejection) {
-	return nil, sshserver.NewChannelRejection(ssh.Prohibited, message.ESSHNotImplemented, "Forwarding channel unimplemented in docker backend", "Forwarding channel unimplemented in docker backend")
+	return nil, sshserver.NewChannelRejection(gossh.Prohibited, message.ESSHNotImplemented, "Forwarding channel unimplemented in docker backend", "Forwarding channel unimplemented in docker backend")
 }
 
 func (s *dummyBackendHandler) OnRequestTCPReverseForward(
@@ -264,7 +269,7 @@ func (s *dummyBackendHandler) OnDirectStreamLocal(
 	channelID uint64,
 	path string,
 ) (channel sshserver.ForwardChannel, failureReason sshserver.ChannelRejection) {
-	return nil, sshserver.NewChannelRejection(ssh.Prohibited, message.ESSHNotImplemented, "Forwarding channel unimplemented in docker backend", "Forwarding channel unimplemented in docker backend")
+	return nil, sshserver.NewChannelRejection(gossh.Prohibited, message.ESSHNotImplemented, "Forwarding channel unimplemented in docker backend", "Forwarding channel unimplemented in docker backend")
 }
 
 func (s *dummyBackendHandler) OnRequestStreamLocal(
@@ -285,6 +290,10 @@ type dummySession struct {
 }
 
 func (d *dummySession) OnClose() {
+}
+
+func (d *dummySession) Context() ssh.Context {
+	return d.session.Context()
 }
 
 func (d *dummySession) OnShutdown(_ context.Context) {

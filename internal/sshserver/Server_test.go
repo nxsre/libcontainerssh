@@ -13,17 +13,18 @@ import (
 	"testing"
 	"time"
 
-    "go.containerssh.io/libcontainerssh/auth"
-    "go.containerssh.io/libcontainerssh/config"
-    "go.containerssh.io/libcontainerssh/internal/sshserver"
-    "go.containerssh.io/libcontainerssh/internal/structutils"
-    "go.containerssh.io/libcontainerssh/internal/test"
-    "go.containerssh.io/libcontainerssh/log"
-    "go.containerssh.io/libcontainerssh/metadata"
-    "go.containerssh.io/libcontainerssh/message"
-    "go.containerssh.io/libcontainerssh/service"
+	"github.com/gliderlabs/ssh"
 	"github.com/stretchr/testify/assert"
-	"golang.org/x/crypto/ssh"
+	"go.containerssh.io/libcontainerssh/auth"
+	"go.containerssh.io/libcontainerssh/config"
+	"go.containerssh.io/libcontainerssh/internal/sshserver"
+	"go.containerssh.io/libcontainerssh/internal/structutils"
+	"go.containerssh.io/libcontainerssh/internal/test"
+	"go.containerssh.io/libcontainerssh/log"
+	"go.containerssh.io/libcontainerssh/message"
+	"go.containerssh.io/libcontainerssh/metadata"
+	"go.containerssh.io/libcontainerssh/service"
+	gossh "golang.org/x/crypto/ssh"
 )
 
 //region Tests
@@ -39,7 +40,7 @@ func TestReadyRejection(t *testing.T) {
 	logger := log.NewTestLogger(t)
 	handler := &rejectHandler{}
 
-	server, err := sshserver.New(cfg, handler, logger)
+	server, err := sshserver.New("", cfg, handler, logger)
 	if err != nil {
 		assert.Fail(t, "failed to create server", err)
 		return
@@ -75,11 +76,11 @@ func TestAuthFailed(t *testing.T) {
 		<-server.shutdownChannel
 	}()
 
-	sshConfig := &ssh.ClientConfig{
+	sshConfig := &gossh.ClientConfig{
 		User: "foo",
-		Auth: []ssh.AuthMethod{ssh.Password("invalid")},
+		Auth: []gossh.AuthMethod{gossh.Password("invalid")},
 	}
-	sshConfig.HostKeyCallback = func(hostname string, remote net.Addr, key ssh.PublicKey) error {
+	sshConfig.HostKeyCallback = func(hostname string, remote net.Addr, key gossh.PublicKey) error {
 		marshaledKey := key.Marshal()
 		if bytes.Equal(marshaledKey, hostKey) {
 			return nil
@@ -87,7 +88,7 @@ func TestAuthFailed(t *testing.T) {
 		return fmt.Errorf("invalid host")
 	}
 
-	sshConnection, err := ssh.Dial("tcp", fmt.Sprintf("127.0.0.1:%d", port), sshConfig)
+	sshConnection, err := gossh.Dial("tcp", fmt.Sprintf("127.0.0.1:%d", port), sshConfig)
 	if err != nil {
 		if !strings.Contains(err.Error(), "unable to authenticate") {
 			assert.Fail(t, "handshake failed for non-auth reasons", err)
@@ -180,13 +181,13 @@ func TestAuthGSSAPI(t *testing.T) {
 	gssClient := gssApiClient{
 		username: "foo",
 	}
-	sshConfig := &ssh.ClientConfig{
+	sshConfig := &gossh.ClientConfig{
 		User: "foo",
-		Auth: []ssh.AuthMethod{ssh.GSSAPIWithMICAuthMethod(&gssClient, "testing.containerssh.io")},
+		Auth: []gossh.AuthMethod{gossh.GSSAPIWithMICAuthMethod(&gssClient, "testing.containerssh.io")},
 	}
-	sshConfig.HostKeyCallback = func(hostname string, remote net.Addr, key ssh.PublicKey) error {
+	sshConfig.HostKeyCallback = func(hostname string, remote net.Addr, key gossh.PublicKey) error {
 		marshaledKey := key.Marshal()
-		private, err := ssh.ParsePrivateKey([]byte(srv.GetHostKey()))
+		private, err := gossh.ParsePrivateKey([]byte(srv.GetHostKey()))
 		if err != nil {
 			panic(err)
 		}
@@ -196,7 +197,7 @@ func TestAuthGSSAPI(t *testing.T) {
 		return fmt.Errorf("invalid host")
 	}
 
-	sshConnection, err := ssh.Dial("tcp", srv.GetListen(), sshConfig)
+	sshConnection, err := gossh.Dial("tcp", srv.GetListen(), sshConfig)
 	if err != nil {
 		if !strings.Contains(err.Error(), "unable to authenticate") {
 			assert.Fail(t, "handshake failed for non-auth reasons", err)
@@ -233,7 +234,7 @@ func TestSessionSuccess(t *testing.T) {
 	reply, exitStatus, err := shellRequestReply(
 		fmt.Sprintf("127.0.0.1:%d", port),
 		"foo",
-		ssh.Password("bar"),
+		gossh.Password("bar"),
 		hostKey,
 		[]byte("Hi"),
 		nil,
@@ -268,7 +269,7 @@ func TestSessionError(t *testing.T) {
 	reply, exitStatus, err := shellRequestReply(
 		fmt.Sprintf("127.0.0.1:%d", port),
 		"foo",
-		ssh.Password("bar"),
+		gossh.Password("bar"),
 		hostKey,
 		[]byte("Ho"),
 		nil,
@@ -287,10 +288,10 @@ func TestPubKey(t *testing.T) {
 		4096,
 	)
 	assert.Nil(t, err, "failed to generate RSA key (%v)", err)
-	signer, err := ssh.NewSignerFromKey(rsaKey)
+	signer, err := gossh.NewSignerFromKey(rsaKey)
 	assert.Nil(t, err, "failed to create signer (%v)", err)
 	publicKey := signer.PublicKey()
-	authorizedKey := strings.TrimSpace(string(ssh.MarshalAuthorizedKey(publicKey)))
+	authorizedKey := strings.TrimSpace(string(gossh.MarshalAuthorizedKey(publicKey)))
 	server := newServerHelper(
 		t,
 		fmt.Sprintf("127.0.0.1:%d", port),
@@ -312,7 +313,7 @@ func TestPubKey(t *testing.T) {
 	reply, exitStatus, err := shellRequestReply(
 		fmt.Sprintf("127.0.0.1:%d", port),
 		"foo",
-		ssh.PublicKeys(signer),
+		gossh.PublicKeys(signer),
 		hostKey,
 		[]byte("Hi"),
 		nil,
@@ -346,15 +347,15 @@ func TestKeepAlive(t *testing.T) {
 	srv.Start()
 	defer srv.Stop(1 * time.Minute)
 
-	hostkey, err := ssh.ParsePrivateKey([]byte(srv.GetHostKey()))
+	hostkey, err := gossh.ParsePrivateKey([]byte(srv.GetHostKey()))
 	if err != nil {
 		t.Fatal("Failed to parse private key")
 	}
-	sshConfig := &ssh.ClientConfig{
+	sshConfig := &gossh.ClientConfig{
 		User: user.Username(),
 		Auth: user.GetAuthMethods(),
 	}
-	sshConfig.HostKeyCallback = func(hostname string, remote net.Addr, key ssh.PublicKey) error {
+	sshConfig.HostKeyCallback = func(hostname string, remote net.Addr, key gossh.PublicKey) error {
 		if bytes.Equal(key.Marshal(), hostkey.PublicKey().Marshal()) {
 			return nil
 		}
@@ -364,7 +365,7 @@ func TestKeepAlive(t *testing.T) {
 	if err != nil {
 		t.Fatal("tcp handshake failed (%w)", err)
 	}
-	connection, _, globalReq, err := ssh.NewClientConn(tcpConnection, srv.GetListen(), sshConfig)
+	connection, _, globalReq, err := gossh.NewClientConn(tcpConnection, srv.GetListen(), sshConfig)
 	if err != nil {
 		t.Fatal("ssh handshake failed (%w)", err)
 	}
@@ -410,23 +411,23 @@ func TestKeepAlive(t *testing.T) {
 func shellRequestReply(
 	host string,
 	user string,
-	authMethod ssh.AuthMethod,
+	authMethod gossh.AuthMethod,
 	hostKey []byte,
 	request []byte,
 	onShell chan struct{},
 	canSendResponse chan struct{},
 ) (reply []byte, exitStatus int, err error) {
-	sshConfig := &ssh.ClientConfig{
+	sshConfig := &gossh.ClientConfig{
 		User: user,
-		Auth: []ssh.AuthMethod{authMethod},
+		Auth: []gossh.AuthMethod{authMethod},
 	}
-	sshConfig.HostKeyCallback = func(hostname string, remote net.Addr, key ssh.PublicKey) error {
+	sshConfig.HostKeyCallback = func(hostname string, remote net.Addr, key gossh.PublicKey) error {
 		if bytes.Equal(key.Marshal(), hostKey) {
 			return nil
 		}
 		return fmt.Errorf("invalid host")
 	}
-	sshConnection, err := ssh.Dial("tcp", host, sshConfig)
+	sshConnection, err := gossh.Dial("tcp", host, sshConfig)
 	if err != nil {
 		return nil, -1, fmt.Errorf("handshake failed (%w)", err)
 	}
@@ -465,7 +466,7 @@ func shellRequestReply(
 	return read(stdout, stdin, session)
 }
 
-func read(stdout io.Reader, stdin io.WriteCloser, session *ssh.Session) (
+func read(stdout io.Reader, stdin io.WriteCloser, session *gossh.Session) (
 	[]byte,
 	int,
 	error,
@@ -480,7 +481,7 @@ func read(stdout io.Reader, stdin io.WriteCloser, session *ssh.Session) (
 		return data[:n], -1, fmt.Errorf("failed to close stdin (%w)", err)
 	}
 	if err := session.Wait(); err != nil {
-		exitError := &ssh.ExitError{}
+		exitError := &gossh.ExitError{}
 		if errors.As(err, &exitError) {
 			exitStatus = exitError.ExitStatus()
 		} else {
@@ -493,7 +494,7 @@ func read(stdout io.Reader, stdin io.WriteCloser, session *ssh.Session) (
 	return data[:n], exitStatus, nil
 }
 
-func createPipe(session *ssh.Session) (io.WriteCloser, io.Reader, error) {
+func createPipe(session *gossh.Session) (io.WriteCloser, io.Reader, error) {
 	stdin, err := session.StdinPipe()
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to request stdin (%w)", err)
@@ -541,7 +542,7 @@ func (h *serverHelper) start(t *testing.T) (hostKey []byte, err error) {
 	if err := cfg.GenerateHostKey(); err != nil {
 		return nil, err
 	}
-	private, err := ssh.ParsePrivateKey([]byte(cfg.HostKeys[0]))
+	private, err := gossh.ParsePrivateKey([]byte(cfg.HostKeys[0]))
 	if err != nil {
 		return nil, err
 	}
@@ -556,7 +557,7 @@ func (h *serverHelper) start(t *testing.T) (hostKey []byte, err error) {
 		h.passwords,
 		h.pubKeys,
 	)
-	server, err := sshserver.New(cfg, handler, logger)
+	server, err := sshserver.New("", cfg, handler, logger)
 	if err != nil {
 		return hostKey, err
 	}
@@ -676,6 +677,11 @@ type fullNetworkConnectionHandler struct {
 	handler *fullHandler
 }
 
+func (f *fullNetworkConnectionHandler) Context() ssh.Context {
+	//TODO implement me
+	panic("implement me")
+}
+
 func (f *fullNetworkConnectionHandler) OnAuthPassword(
 	meta metadata.ConnectionAuthPendingMetadata,
 	password []byte,
@@ -716,6 +722,11 @@ type fullSSHConnectionHandler struct {
 	handler *fullHandler
 }
 
+func (f *fullSSHConnectionHandler) Context() ssh.Context {
+	//TODO implement me
+	panic("implement me")
+}
+
 func (f *fullSSHConnectionHandler) OnSessionChannel(
 	_ metadata.ChannelMetadata,
 	_ []byte,
@@ -735,7 +746,7 @@ func (s *fullSSHConnectionHandler) OnTCPForwardChannel(
 	originatorHost string,
 	originatorPort uint32,
 ) (channel sshserver.ForwardChannel, failureReason sshserver.ChannelRejection) {
-	return nil, sshserver.NewChannelRejection(ssh.Prohibited, message.ESSHNotImplemented, "Forwading channel unimplemented", "Forwading channel unimplemented")
+	return nil, sshserver.NewChannelRejection(gossh.Prohibited, message.ESSHNotImplemented, "Forwading channel unimplemented", "Forwading channel unimplemented")
 }
 
 func (s *fullSSHConnectionHandler) OnRequestTCPReverseForward(
@@ -757,7 +768,7 @@ func (s *fullSSHConnectionHandler) OnDirectStreamLocal(
 	channelID uint64,
 	path string,
 ) (channel sshserver.ForwardChannel, failureReason sshserver.ChannelRejection) {
-	return nil, sshserver.NewChannelRejection(ssh.Prohibited, message.ESSHNotImplemented, "Forwading channel unimplemented in docker backend", "Forwading channel unimplemented in docker backend")
+	return nil, sshserver.NewChannelRejection(gossh.Prohibited, message.ESSHNotImplemented, "Forwading channel unimplemented in docker backend", "Forwading channel unimplemented in docker backend")
 }
 
 func (s *fullSSHConnectionHandler) OnRequestStreamLocal(
@@ -783,6 +794,11 @@ type fullSessionChannelHandler struct {
 	handler *fullHandler
 	env     map[string]string
 	session sshserver.SessionChannel
+}
+
+func (f *fullSessionChannelHandler) Context() ssh.Context {
+	//TODO implement me
+	panic("implement me")
 }
 
 func (f *fullSessionChannelHandler) OnEnvRequest(_ uint64, name string, value string) error {

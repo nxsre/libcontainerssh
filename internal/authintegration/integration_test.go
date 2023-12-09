@@ -3,6 +3,7 @@ package authintegration_test
 import (
 	"context"
 	"fmt"
+	"github.com/gliderlabs/ssh"
 	"testing"
 	"time"
 
@@ -20,7 +21,7 @@ import (
 	"go.containerssh.io/libcontainerssh/message"
 	"go.containerssh.io/libcontainerssh/metadata"
 	"go.containerssh.io/libcontainerssh/service"
-	"golang.org/x/crypto/ssh"
+	gossh "golang.org/x/crypto/ssh"
 )
 
 func TestAuthentication(t *testing.T) {
@@ -34,11 +35,16 @@ func TestAuthentication(t *testing.T) {
 	sshServerConfig, lifecycle := startSSHServer(t, logger, authServerPort)
 	defer lifecycle.Stop(context.Background())
 
+<<<<<<< Updated upstream
 	testConnection(t, "foo", ssh.Password("bar"), sshServerConfig, true)
 	testConnection(t, "foo", ssh.Password("baz"), sshServerConfig, false)
 
 	testConnection(t, "foonoauthz", ssh.Password("bar"), sshServerConfig, false)
 	testConnection(t, "foonoauthz", ssh.Password("baz"), sshServerConfig, false)
+=======
+	testConnection(t, gossh.Password("bar"), sshServerConfig, true)
+	testConnection(t, gossh.Password("baz"), sshServerConfig, false)
+>>>>>>> Stashed changes
 }
 
 func startAuthServer(t *testing.T, logger log.Logger, authServerPort int) service.Lifecycle {
@@ -98,6 +104,7 @@ func startSSHServer(t *testing.T, logger log.Logger, authServerPort int) (config
 	structutils.Defaults(&sshServerConfig)
 	assert.NoError(t, sshServerConfig.GenerateHostKey())
 	srv, err := sshserver.New(
+		"",
 		sshServerConfig,
 		handler,
 		logger,
@@ -120,15 +127,23 @@ func startSSHServer(t *testing.T, logger log.Logger, authServerPort int) (config
 	return sshServerConfig, lifecycle
 }
 
+<<<<<<< Updated upstream
 func testConnection(t *testing.T, username string, authMethod ssh.AuthMethod, sshServerConfig config.SSHConfig, success bool) {
 	clientConfig := ssh.ClientConfig{
 		Config: ssh.Config{},
 		User:   username,
 		Auth:   []ssh.AuthMethod{authMethod},
+=======
+func testConnection(t *testing.T, authMethod gossh.AuthMethod, sshServerConfig config.SSHConfig, success bool) {
+	clientConfig := gossh.ClientConfig{
+		Config: gossh.Config{},
+		User:   "foo",
+		Auth:   []gossh.AuthMethod{authMethod},
+>>>>>>> Stashed changes
 		// We don't care about host key verification for this test.
-		HostKeyCallback: ssh.InsecureIgnoreHostKey(), //nolint:gosec
+		HostKeyCallback: gossh.InsecureIgnoreHostKey(), //nolint:gosec
 	}
-	client, err := ssh.Dial("tcp", sshServerConfig.Listen, &clientConfig)
+	client, err := gossh.Dial("tcp", sshServerConfig.Listen, &clientConfig)
 	if success {
 		assert.Nil(t, err)
 	} else {
@@ -144,6 +159,11 @@ type testBackend struct {
 	sshserver.AbstractNetworkConnectionHandler
 }
 
+func (t *testBackend) Context() ssh.Context {
+	//TODO implement me
+	panic("implement me")
+}
+
 func (t *testBackend) OnUnsupportedGlobalRequest(_ uint64, _ string, _ []byte) {}
 
 func (b *testBackend) OnFailedDecodeGlobalRequest(_ uint64, _ string, _ []byte, _ error) {}
@@ -154,7 +174,7 @@ func (t *testBackend) OnSessionChannel(_ metadata.ChannelMetadata, _ []byte, _ s
 	_ sshserver.SessionChannelHandler,
 	_ sshserver.ChannelRejection,
 ) {
-	return nil, sshserver.NewChannelRejection(ssh.UnknownChannelType, message.MTest, "not supported", "not supported")
+	return nil, sshserver.NewChannelRejection(gossh.UnknownChannelType, message.MTest, "not supported", "not supported")
 }
 
 func (s *testBackend) OnTCPForwardChannel(
@@ -164,7 +184,7 @@ func (s *testBackend) OnTCPForwardChannel(
 	originatorHost string,
 	originatorPort uint32,
 ) (channel sshserver.ForwardChannel, failureReason sshserver.ChannelRejection) {
-	return nil, sshserver.NewChannelRejection(ssh.Prohibited, message.ESSHNotImplemented, "Forwarding channel unimplemented in docker backend", "Forwarding channel unimplemented in docker backend")
+	return nil, sshserver.NewChannelRejection(gossh.Prohibited, message.ESSHNotImplemented, "Forwarding channel unimplemented in docker backend", "Forwarding channel unimplemented in docker backend")
 }
 
 func (s *testBackend) OnRequestTCPReverseForward(
@@ -186,7 +206,7 @@ func (s *testBackend) OnDirectStreamLocal(
 	channelID uint64,
 	path string,
 ) (channel sshserver.ForwardChannel, failureReason sshserver.ChannelRejection) {
-	return nil, sshserver.NewChannelRejection(ssh.Prohibited, message.ESSHNotImplemented, "Forwarding channel unimplemented in docker backend", "Forwarding channel unimplemented in docker backend")
+	return nil, sshserver.NewChannelRejection(gossh.Prohibited, message.ESSHNotImplemented, "Forwarding channel unimplemented in docker backend", "Forwarding channel unimplemented in docker backend")
 }
 
 func (s *testBackend) OnRequestStreamLocal(

@@ -3,23 +3,25 @@ package backend
 import (
 	"context"
 	"fmt"
+	"github.com/gliderlabs/ssh"
+	"go.containerssh.io/libcontainerssh/internal/local"
 	"net"
 	"sync"
 	"time"
 
-    auth2 "go.containerssh.io/libcontainerssh/auth"
-    "go.containerssh.io/libcontainerssh/config"
-    internalConfig "go.containerssh.io/libcontainerssh/internal/config"
-    "go.containerssh.io/libcontainerssh/internal/docker"
-    "go.containerssh.io/libcontainerssh/internal/kubernetes"
-    "go.containerssh.io/libcontainerssh/internal/metrics"
-    "go.containerssh.io/libcontainerssh/internal/security"
-    "go.containerssh.io/libcontainerssh/internal/sshproxy"
-    "go.containerssh.io/libcontainerssh/internal/sshserver"
-    "go.containerssh.io/libcontainerssh/internal/structutils"
-    "go.containerssh.io/libcontainerssh/log"
-    "go.containerssh.io/libcontainerssh/message"
-    "go.containerssh.io/libcontainerssh/metadata"
+	auth2 "go.containerssh.io/libcontainerssh/auth"
+	"go.containerssh.io/libcontainerssh/config"
+	internalConfig "go.containerssh.io/libcontainerssh/internal/config"
+	"go.containerssh.io/libcontainerssh/internal/docker"
+	"go.containerssh.io/libcontainerssh/internal/kubernetes"
+	"go.containerssh.io/libcontainerssh/internal/metrics"
+	"go.containerssh.io/libcontainerssh/internal/security"
+	"go.containerssh.io/libcontainerssh/internal/sshproxy"
+	"go.containerssh.io/libcontainerssh/internal/sshserver"
+	"go.containerssh.io/libcontainerssh/internal/structutils"
+	"go.containerssh.io/libcontainerssh/log"
+	"go.containerssh.io/libcontainerssh/message"
+	"go.containerssh.io/libcontainerssh/metadata"
 )
 
 type handler struct {
@@ -35,6 +37,7 @@ type handler struct {
 	lock                   *sync.Mutex
 }
 
+// OnNetworkConnection 连接入口，初始化 ssh.Context
 func (h *handler) OnNetworkConnection(
 	meta metadata.ConnectionMetadata,
 ) (sshserver.NetworkConnectionHandler, metadata.ConnectionMetadata, error) {
@@ -58,6 +61,7 @@ type networkHandler struct {
 	backend      sshserver.NetworkConnectionHandler
 	lock         *sync.Mutex
 	logger       log.Logger
+	ctx          ssh.Context
 }
 
 func (n *networkHandler) OnAuthPassword(meta metadata.ConnectionAuthPendingMetadata, _ []byte) (
@@ -83,6 +87,10 @@ func (n *networkHandler) authResponse(meta metadata.ConnectionAuthPendingMetadat
 	}
 }
 
+func (n *networkHandler) Context() ssh.Context {
+	return n.ctx
+}
+
 func (n *networkHandler) OnAuthPubKey(
 	meta metadata.ConnectionAuthPendingMetadata,
 	_ auth2.PublicKey,
@@ -93,7 +101,7 @@ func (n *networkHandler) OnAuthPubKey(
 func (n *networkHandler) OnHandshakeFailed(metadata.ConnectionMetadata, error) {
 }
 
-func (n *networkHandler) OnHandshakeSuccess(meta metadata.ConnectionAuthenticatedMetadata) (
+func (n *networkHandler) OnHandshakeSuccess(meta metadata.ConnectionAuthenticatedMetadata, ctx ssh.Context) (
 	connection sshserver.SSHConnectionHandler,
 	resultMeta metadata.ConnectionAuthenticatedMetadata,
 	failureReason error,
@@ -107,6 +115,8 @@ func (n *networkHandler) OnHandshakeSuccess(meta metadata.ConnectionAuthenticate
 		"username",
 		meta.Username,
 	).WithLabel("authenticatedUsername", meta.AuthenticatedUsername)
+
+	n.ctx = ctx
 
 	return n.initBackend(newMeta, appConfig, backendLogger)
 }
@@ -133,7 +143,7 @@ func (n *networkHandler) initBackend(
 	}
 	n.backend = backend
 
-	return backend.OnHandshakeSuccess(meta)
+	return backend.OnHandshakeSuccess(meta, n.ctx)
 }
 
 func (n *networkHandler) getConfiguredBackend(
@@ -149,6 +159,15 @@ func (n *networkHandler) getConfiguredBackend(
 			n.connectionID,
 			appConfig.Docker,
 			backendLogger.WithLabel("backend", "docker"),
+			backendRequestsCounter,
+			backendErrorCounter,
+		)
+	case "local":
+		backend, failureReason = local.New(
+			n.remoteAddr,
+			n.connectionID,
+			appConfig.Local,
+			backendLogger.WithLabel("backend", "local"),
 			backendRequestsCounter,
 			backendErrorCounter,
 		)

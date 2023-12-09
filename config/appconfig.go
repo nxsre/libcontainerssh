@@ -3,11 +3,12 @@ package config
 import (
 	"fmt"
 
-    "go.containerssh.io/libcontainerssh/internal/structutils"
-    "go.containerssh.io/libcontainerssh/message"
+	"go.containerssh.io/libcontainerssh/internal/structutils"
+	"go.containerssh.io/libcontainerssh/message"
 )
 
 // AppConfig is the root configuration object of ContainerSSH.
+//
 //goland:noinspection GoDeprecation
 type AppConfig struct {
 	// SSH contains the configuration for the SSH server.
@@ -41,6 +42,8 @@ type AppConfig struct {
 	Backend Backend `json:"backend" yaml:"backend" default:"docker"`
 	// Docker contains the configuration for the docker backend. This option can be changed from the config server.
 	Docker DockerConfig `json:"docker,omitempty" yaml:"docker"`
+	// Local contains the configuration for the local backend. This option can be changed from the config server.
+	Local LocalConfig `json:"local,omitempty" yaml:"local"`
 	// DockerRun is a placeholder for the removed DockerRun backend. Filling this with anything but nil will yield a
 	// validation error.
 	DockerRun interface{} `json:"dockerrun,omitempty"`
@@ -63,6 +66,7 @@ func BackendValues() []Backend {
 		BackendDocker,
 		BackendKubernetes,
 		BackendSSHProxy,
+		BackendLocal,
 	}
 }
 
@@ -70,6 +74,8 @@ func BackendValues() []Backend {
 func (b Backend) Validate() error {
 	switch b {
 	case BackendDocker:
+		fallthrough
+	case BackendLocal:
 		fallthrough
 	case BackendKubernetes:
 		fallthrough
@@ -84,6 +90,7 @@ func (b Backend) Validate() error {
 
 const (
 	BackendDocker     Backend = "docker"
+	BackendLocal      Backend = "local"
 	BackendKubernetes Backend = "kubernetes"
 	BackendSSHProxy   Backend = "sshproxy"
 )
@@ -128,6 +135,8 @@ func (cfg *AppConfig) Validate(dynamic bool) error {
 	switch cfg.Backend {
 	case BackendDocker:
 		queue.add("docker", &cfg.Docker)
+	case BackendLocal:
+		queue.add("local", &cfg.Local)
 	case BackendKubernetes:
 		queue.add("kubernetes", &cfg.Kubernetes)
 	case BackendSSHProxy:

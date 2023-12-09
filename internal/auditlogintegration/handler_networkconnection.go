@@ -2,13 +2,14 @@ package auditlogintegration
 
 import (
 	"context"
+	"github.com/gliderlabs/ssh"
 
-    "go.containerssh.io/libcontainerssh/auditlog/message"
-    publicAuth "go.containerssh.io/libcontainerssh/auth"
-    "go.containerssh.io/libcontainerssh/internal/auditlog"
-    internalAuth "go.containerssh.io/libcontainerssh/internal/auth"
-    "go.containerssh.io/libcontainerssh/internal/sshserver"
-    "go.containerssh.io/libcontainerssh/metadata"
+	"go.containerssh.io/libcontainerssh/auditlog/message"
+	publicAuth "go.containerssh.io/libcontainerssh/auth"
+	"go.containerssh.io/libcontainerssh/internal/auditlog"
+	internalAuth "go.containerssh.io/libcontainerssh/internal/auth"
+	"go.containerssh.io/libcontainerssh/internal/sshserver"
+	"go.containerssh.io/libcontainerssh/metadata"
 )
 
 type networkConnectionHandler struct {
@@ -62,6 +63,10 @@ func (n *networkConnectionHandler) OnAuthKeyboardInteractive(
 
 func (n *networkConnectionHandler) OnShutdown(shutdownContext context.Context) {
 	n.backend.OnShutdown(shutdownContext)
+}
+
+func (n *networkConnectionHandler) Context() ssh.Context {
+	return n.backend.Context()
 }
 
 func (n *networkConnectionHandler) OnAuthPassword(
@@ -125,6 +130,7 @@ func (n *networkConnectionHandler) OnHandshakeFailed(meta metadata.ConnectionMet
 
 func (n *networkConnectionHandler) OnHandshakeSuccess(
 	meta metadata.ConnectionAuthenticatedMetadata,
+	ctx ssh.Context,
 ) (
 	connection sshserver.SSHConnectionHandler,
 	metadata metadata.ConnectionAuthenticatedMetadata,
@@ -132,7 +138,7 @@ func (n *networkConnectionHandler) OnHandshakeSuccess(
 ) {
 	// TODO log authenticated username
 	n.audit.OnHandshakeSuccessful(meta.Username)
-	backend, meta, err := n.backend.OnHandshakeSuccess(meta)
+	backend, meta, err := n.backend.OnHandshakeSuccess(meta, ctx)
 	if err != nil {
 		return nil, meta, err
 	}

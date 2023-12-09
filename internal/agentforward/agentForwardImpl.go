@@ -6,9 +6,9 @@ import (
 	"io"
 	"sync"
 
-    protocol "go.containerssh.io/libcontainerssh/agentprotocol"
-    "go.containerssh.io/libcontainerssh/internal/sshserver"
-    "go.containerssh.io/libcontainerssh/log"
+	protocol "go.containerssh.io/libcontainerssh/agentprotocol"
+	"go.containerssh.io/libcontainerssh/internal/sshserver"
+	"go.containerssh.io/libcontainerssh/log"
 )
 
 type agentForward struct {
@@ -54,7 +54,7 @@ func (f *agentForward) mangleForwardAddr(proto string, addr string, port uint32)
 
 func serveConnection(log log.Logger, dst io.WriteCloser, src io.ReadCloser) {
 	_, err := io.Copy(dst, src)
-	if err != nil && errors.Is(err, io.EOF) {
+	if err != nil && !errors.Is(err, io.EOF) && !errors.Is(err, io.ErrClosedPipe) {
 		log.Warning("Connection error", err)
 	}
 	_ = dst.Close()
@@ -157,12 +157,12 @@ func (f *agentForward) setupX11(
 	if f.x11Forward != nil {
 		return fmt.Errorf("X11 forwarding already setup")
 	}
+
 	fromAgent, toAgent, err := setupAgentCallback()
 	if err != nil {
 		return err
 	}
 	f.x11Forward = protocol.NewForwardCtx(fromAgent, toAgent, logger)
-
 	screenstr := fmt.Sprintf("%d", screen)
 	connChan, err := f.x11Forward.StartX11ForwardClient(singleConnection, screenstr, proto, cookie)
 	if err != nil {
@@ -217,13 +217,13 @@ func (f *agentForward) NewTCPReverseForwarding(
 
 	fromAgent, toAgent, err := setupAgentCallback()
 	if err != nil {
-		return err
+		return fmt.Errorf("NewTCPReverseForwarding 111111111", err)
 	}
 
 	f.reverseForwards[key] = protocol.NewForwardCtx(fromAgent, toAgent, logger)
 	connChan, err := f.reverseForwards[key].StartReverseForwardClient(bindHost, bindPort, false)
 	if err != nil {
-		return err
+		return fmt.Errorf("NewTCPReverseForwarding 2222222222", err)
 	}
 
 	go f.serveReverseForward(connChan, reverseHandler)
@@ -391,11 +391,15 @@ func (f *agentForward) OnShutdown() {
 	f.lock.Lock()
 	defer f.lock.Unlock()
 	if f.directForward != nil {
-		_ = f.directForward.NoMoreConnections()
+		if f.directForward != nil {
+			_ = f.directForward.NoMoreConnections()
+		}
 		f.directForward.Kill()
 	}
 	if f.x11Forward != nil {
-		_ = f.directForward.NoMoreConnections()
+		if f.directForward != nil {
+			_ = f.directForward.NoMoreConnections()
+		}
 		f.x11Forward.Kill()
 	}
 	for _, forward := range f.reverseForwards {

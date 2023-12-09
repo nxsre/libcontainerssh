@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/docker/docker/errdefs"
 	"io"
 	"strconv"
 	"strings"
@@ -1187,10 +1188,13 @@ loop:
 			if inspectResult.State.Status == "stopped" {
 				return nil
 			}
+			timeout := int(d.container.config.Timeouts.ContainerStop.Seconds())
 			lastError = d.dockerClient.ContainerStop(
 				ctx,
 				d.container.containerID,
-				&d.container.config.Timeouts.ContainerStop)
+				container.StopOptions{
+					Timeout: &timeout,
+				})
 			if lastError == nil {
 				return nil
 			}
@@ -1216,7 +1220,7 @@ loop:
 
 func isPermanentError(err error) bool {
 	return client.IsErrNotFound(err) ||
-		client.IsErrNotImplemented(err) ||
-		client.IsErrPluginPermissionDenied(err) ||
-		client.IsErrUnauthorized(err)
+		errdefs.IsNotImplemented(err) ||
+		//client.IsErrPluginPermissionDenied(err) ||
+		errdefs.IsUnauthorized(err)
 }

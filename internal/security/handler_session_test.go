@@ -3,13 +3,14 @@ package security //nolint:testpackage
 import (
 	"context"
 	"fmt"
+	"github.com/gliderlabs/ssh"
 	"sync"
 	"testing"
 
-    "go.containerssh.io/libcontainerssh/config"
-    "go.containerssh.io/libcontainerssh/internal/sshserver"
-    "go.containerssh.io/libcontainerssh/log"
 	"github.com/stretchr/testify/assert"
+	"go.containerssh.io/libcontainerssh/config"
+	"go.containerssh.io/libcontainerssh/internal/sshserver"
+	"go.containerssh.io/libcontainerssh/log"
 )
 
 func TestEnvRequest(t *testing.T) {
@@ -277,6 +278,10 @@ func (s *dummyBackend) OnX11Request(
 	reverseHandler sshserver.ReverseForward,
 ) error {
 	return fmt.Errorf("Unimplemented")
+}
+
+func (s *dummyBackend) Context() ssh.Context {
+	return nil
 }
 
 // endregion

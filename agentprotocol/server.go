@@ -6,9 +6,9 @@ import (
 	"sync"
 	"time"
 
-    log "go.containerssh.io/libcontainerssh/log"
-    message "go.containerssh.io/libcontainerssh/message"
 	"github.com/fxamacker/cbor/v2"
+	log "go.containerssh.io/libcontainerssh/log"
+	message "go.containerssh.io/libcontainerssh/message"
 )
 
 const (
@@ -684,8 +684,10 @@ func (c *ForwardCtx) StartReverseForwardClientUnix(path string, singleConnection
 }
 
 func (c *ForwardCtx) NoMoreConnections() error {
-	c.stopped = true
-	close(c.connectionChannel)
+	if !c.stopped {
+		c.stopped = true
+		close(c.connectionChannel)
+	}
 	return c.writePacket(
 		&Packet{
 			Type: PACKET_NO_MORE_CONNECTIONS,

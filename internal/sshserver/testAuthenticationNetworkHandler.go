@@ -4,10 +4,11 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"github.com/gliderlabs/ssh"
 
-    auth2 "go.containerssh.io/libcontainerssh/auth"
-    "go.containerssh.io/libcontainerssh/internal/auth"
-    "go.containerssh.io/libcontainerssh/metadata"
+	auth2 "go.containerssh.io/libcontainerssh/auth"
+	"go.containerssh.io/libcontainerssh/internal/auth"
+	"go.containerssh.io/libcontainerssh/metadata"
 )
 
 type testAuthenticationNetworkHandler struct {
@@ -62,6 +63,10 @@ func (t *testAuthenticationNetworkHandler) OnAuthKeyboardInteractive(
 
 func (t *testAuthenticationNetworkHandler) OnDisconnect() {
 	t.backend.OnDisconnect()
+}
+
+func (t *testAuthenticationNetworkHandler) Context() ssh.Context {
+	return t.backend.Context()
 }
 
 func (t *testAuthenticationNetworkHandler) OnShutdown(shutdownContext context.Context) {
@@ -154,10 +159,10 @@ func (t *testAuthenticationNetworkHandler) OnHandshakeFailed(meta metadata.Conne
 	t.backend.OnHandshakeFailed(meta, err)
 }
 
-func (t *testAuthenticationNetworkHandler) OnHandshakeSuccess(authenticatedMetadata metadata.ConnectionAuthenticatedMetadata) (
+func (t *testAuthenticationNetworkHandler) OnHandshakeSuccess(authenticatedMetadata metadata.ConnectionAuthenticatedMetadata, ctx ssh.Context) (
 	connection SSHConnectionHandler,
 	meta metadata.ConnectionAuthenticatedMetadata,
 	failureReason error,
 ) {
-	return t.backend.OnHandshakeSuccess(authenticatedMetadata)
+	return t.backend.OnHandshakeSuccess(authenticatedMetadata, ctx)
 }

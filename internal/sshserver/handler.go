@@ -5,12 +5,12 @@ import (
 	"fmt"
 	"io"
 
+	"github.com/gliderlabs/ssh"
 	"go.containerssh.io/libcontainerssh/auth"
 	auth2 "go.containerssh.io/libcontainerssh/internal/auth"
 	message2 "go.containerssh.io/libcontainerssh/message"
 	"go.containerssh.io/libcontainerssh/metadata"
-
-	"golang.org/x/crypto/ssh"
+	gossh "golang.org/x/crypto/ssh"
 )
 
 // Handler is the basic conformanceTestHandler for SSH connections. It contains several methods to handle startup and operations of the
@@ -134,7 +134,7 @@ type NetworkConnectionHandler interface {
 	// OnHandshakeSuccess is called when the SSH handshake was successful. It returns metadata to process
 	// requests, or failureReason to indicate that a backend error has happened. In this case, the
 	// metadata will be closed and OnDisconnect will be called.
-	OnHandshakeSuccess(metadata.ConnectionAuthenticatedMetadata) (
+	OnHandshakeSuccess(metadata.ConnectionAuthenticatedMetadata, ssh.Context) (
 		connection SSHConnectionHandler,
 		meta metadata.ConnectionAuthenticatedMetadata,
 		failureReason error,
@@ -147,6 +147,8 @@ type NetworkConnectionHandler interface {
 	// for the shutdown, after which the server should abort all running connections and return as fast as
 	// possible.
 	OnShutdown(shutdownContext context.Context)
+
+	Context() ssh.Context
 }
 
 // ChannelRejection is an error type that also contains a Message and a Reason
@@ -154,7 +156,7 @@ type ChannelRejection interface {
 	message2.Message
 
 	// Reason contains the SSH-specific reason for the rejection.
-	Reason() ssh.RejectionReason
+	Reason() gossh.RejectionReason
 }
 
 // SessionChannel contains a set of calls to manipulate the session channel.
@@ -173,6 +175,8 @@ type SessionChannel interface {
 	CloseWrite() error
 	// Close closes the channel for reading and writing.
 	Close() error
+
+	Context() ssh.Context
 }
 
 const (
@@ -308,6 +312,8 @@ type SSHConnectionHandler interface {
 	//            for the shutdown, after which the server should abort all running connections and return as fast as
 	//            possible.
 	OnShutdown(shutdownContext context.Context)
+
+	Context() ssh.Context
 }
 
 // ExitStatus contains the status code with which the program exited.
@@ -473,4 +479,6 @@ type SessionChannelHandler interface {
 	OnShutdown(shutdownContext context.Context)
 
 	// endregion
+
+	Context() ssh.Context
 }

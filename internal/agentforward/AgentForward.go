@@ -7,6 +7,10 @@ import (
 	"go.containerssh.io/libcontainerssh/log"
 )
 
+var (
+	DISPLAY_IDX uint64
+)
+
 // AgentForward is a network connection forwarding interface that uses the ContainerSSH Agent protocol
 type AgentForward interface {
 	// NewX11Forwarding initializes the X11 forwarding mode of the agent

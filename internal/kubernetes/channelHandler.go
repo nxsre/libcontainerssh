@@ -4,13 +4,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/gliderlabs/ssh"
 	"io"
 	"strings"
 
-    "go.containerssh.io/libcontainerssh/config"
-    "go.containerssh.io/libcontainerssh/internal/sshserver"
-    "go.containerssh.io/libcontainerssh/internal/unixutils"
-    "go.containerssh.io/libcontainerssh/message"
+	"go.containerssh.io/libcontainerssh/config"
+	"go.containerssh.io/libcontainerssh/internal/sshserver"
+	"go.containerssh.io/libcontainerssh/internal/unixutils"
+	"go.containerssh.io/libcontainerssh/message"
 )
 
 type channelHandler struct {
@@ -289,7 +290,7 @@ func (c *channelHandler) OnX11Request(
 	}
 
 	c.networkHandler.logger.Debug("Setting X11 vars")
-	c.env["DISPLAY"] = "localhost:10"
+	c.env["DISPLAY"] = fmt.Sprintf("localhost:%d", 10)
 	c.networkHandler.logger.Warning("Kubernetes: Starting reverse forward")
 
 	err := c.connectionHandler.agentForward.NewX11Forwarding(
@@ -341,4 +342,8 @@ func (c *channelHandler) OnShutdown(shutdownContext context.Context) {
 		case <-c.exec.done():
 		}
 	}
+}
+
+func (c *channelHandler) Context() ssh.Context {
+	return c.session.Context()
 }

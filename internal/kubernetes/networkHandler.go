@@ -3,6 +3,7 @@ package kubernetes
 import (
 	"context"
 	"fmt"
+	"github.com/gliderlabs/ssh"
 	"net"
 	"regexp"
 	"strings"
@@ -32,6 +33,7 @@ type networkHandler struct {
 	labels       map[string]string
 	annotations  map[string]string
 	done         chan struct{}
+	ctx          ssh.Context
 }
 
 func (n *networkHandler) OnAuthPassword(meta metadata.ConnectionAuthPendingMetadata, _ []byte) (
@@ -51,8 +53,11 @@ func (n *networkHandler) OnAuthPubKey(
 
 func (n *networkHandler) OnHandshakeFailed(_ metadata.ConnectionMetadata, _ error) {
 }
+func (n *networkHandler) Context() ssh.Context {
+	return nil
+}
 
-func (n *networkHandler) OnHandshakeSuccess(meta metadata.ConnectionAuthenticatedMetadata) (
+func (n *networkHandler) OnHandshakeSuccess(meta metadata.ConnectionAuthenticatedMetadata, sshCtx ssh.Context) (
 	connection sshserver.SSHConnectionHandler,
 	returnMeta metadata.ConnectionAuthenticatedMetadata,
 	failureReason error,
@@ -158,6 +163,7 @@ func (n *networkHandler) OnHandshakeSuccess(meta metadata.ConnectionAuthenticate
 		env:            env,
 		files:          files,
 		agentForward:   agentforward.NewAgentForward(n.logger),
+		ctx:            sshCtx,
 	}, meta, nil
 }
 

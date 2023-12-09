@@ -2,12 +2,13 @@ package auditlogintegration
 
 import (
 	"context"
+	"github.com/gliderlabs/ssh"
 	"io"
 
-    "go.containerssh.io/libcontainerssh/auditlog/message"
-    "go.containerssh.io/libcontainerssh/internal/auditlog"
-    "go.containerssh.io/libcontainerssh/internal/sshserver"
-    "go.containerssh.io/libcontainerssh/metadata"
+	"go.containerssh.io/libcontainerssh/auditlog/message"
+	"go.containerssh.io/libcontainerssh/internal/auditlog"
+	"go.containerssh.io/libcontainerssh/internal/sshserver"
+	"go.containerssh.io/libcontainerssh/metadata"
 )
 
 type sshConnectionHandler struct {
@@ -17,6 +18,10 @@ type sshConnectionHandler struct {
 
 func (s *sshConnectionHandler) OnShutdown(shutdownContext context.Context) {
 	s.backend.OnShutdown(shutdownContext)
+}
+
+func (s *sshConnectionHandler) Context() ssh.Context {
+	return s.backend.Context()
 }
 
 func (s *sshConnectionHandler) OnUnsupportedGlobalRequest(requestID uint64, requestType string, payload []byte) {
@@ -44,6 +49,7 @@ func (s *sshConnectionHandler) OnSessionChannel(
 	proxy := &sessionProxy{
 		backend: session,
 	}
+
 	backend, err := s.backend.OnSessionChannel(meta, extraData, proxy)
 	if err != nil {
 		return nil, err
@@ -242,4 +248,9 @@ func (s *sessionProxy) CloseWrite() error {
 func (s *sessionProxy) Close() error {
 	// Audit logging is done via the session channel hook.
 	return s.backend.Close()
+}
+
+func (s *sessionProxy) Context() ssh.Context {
+	// Audit logging is done via the session channel hook.
+	return s.backend.Context()
 }

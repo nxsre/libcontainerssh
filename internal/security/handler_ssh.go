@@ -2,14 +2,15 @@ package security
 
 import (
 	"context"
+	"github.com/gliderlabs/ssh"
 	"sync"
 
-    config2 "go.containerssh.io/libcontainerssh/config"
-    "go.containerssh.io/libcontainerssh/internal/sshserver"
-    "go.containerssh.io/libcontainerssh/log"
-    "go.containerssh.io/libcontainerssh/message"
-    "go.containerssh.io/libcontainerssh/metadata"
-	"golang.org/x/crypto/ssh"
+	config2 "go.containerssh.io/libcontainerssh/config"
+	"go.containerssh.io/libcontainerssh/internal/sshserver"
+	"go.containerssh.io/libcontainerssh/log"
+	"go.containerssh.io/libcontainerssh/message"
+	"go.containerssh.io/libcontainerssh/metadata"
+	gossh "golang.org/x/crypto/ssh"
 )
 
 type sshConnectionHandler struct {
@@ -22,6 +23,10 @@ type sshConnectionHandler struct {
 
 func (s *sshConnectionHandler) OnShutdown(shutdownContext context.Context) {
 	s.backend.OnShutdown(shutdownContext)
+}
+
+func (s *sshConnectionHandler) Context() ssh.Context {
+	return s.backend.Context()
 }
 
 func (s *sshConnectionHandler) OnUnsupportedGlobalRequest(requestID uint64, requestType string, payload []byte) {
@@ -84,7 +89,7 @@ func (s *sshConnectionHandler) OnTCPForwardChannel(
 	switch mode {
 	case config2.ExecutionPolicyDisable:
 		err := sshserver.NewChannelRejection(
-			ssh.Prohibited,
+			gossh.Prohibited,
 			message.ESecurityForwardingRejected,
 			"Forwarding is rejected",
 			"Forwarding is rejected because it is disabled",
@@ -93,7 +98,7 @@ func (s *sshConnectionHandler) OnTCPForwardChannel(
 		return nil, err
 	case config2.ExecutionPolicyFilter:
 		err := sshserver.NewChannelRejection(
-			ssh.Prohibited,
+			gossh.Prohibited,
 			message.ESecurityForwardingRejected,
 			"Forwarding is rejected",
 			"Forwarding is rejected because it is set to filtered and filtering is currently not supported",
@@ -155,7 +160,7 @@ func (s *sshConnectionHandler) OnDirectStreamLocal(
 	switch mode {
 	case config2.ExecutionPolicyDisable:
 		err := sshserver.NewChannelRejection(
-			ssh.Prohibited,
+			gossh.Prohibited,
 			message.ESecurityForwardingRejected,
 			"StreamLocal forwarding is rejected",
 			"StreamLocal forwarding is rejected because it is disabled",
@@ -164,7 +169,7 @@ func (s *sshConnectionHandler) OnDirectStreamLocal(
 		return nil, err
 	case config2.ExecutionPolicyFilter:
 		err := sshserver.NewChannelRejection(
-			ssh.Prohibited,
+			gossh.Prohibited,
 			message.ESecurityForwardingRejected,
 			"StreamLocal forwarding is rejected",
 			"StreamLocal forwarding is rejected because it is set to filtered and filtering is currently not supported",
@@ -260,6 +265,6 @@ func (e *ErrTooManySessions) Message() string {
 }
 
 // Reason contains the rejection code.
-func (e *ErrTooManySessions) Reason() ssh.RejectionReason {
-	return ssh.ResourceShortage
+func (e *ErrTooManySessions) Reason() gossh.RejectionReason {
+	return gossh.ResourceShortage
 }

@@ -2,20 +2,22 @@ package security
 
 import (
 	"context"
+	"github.com/gliderlabs/ssh"
 	"sync"
 
-    auth2 "go.containerssh.io/libcontainerssh/auth"
-    config2 "go.containerssh.io/libcontainerssh/config"
-    "go.containerssh.io/libcontainerssh/internal/auth"
-    "go.containerssh.io/libcontainerssh/internal/sshserver"
-    "go.containerssh.io/libcontainerssh/log"
-    "go.containerssh.io/libcontainerssh/metadata"
+	auth2 "go.containerssh.io/libcontainerssh/auth"
+	config2 "go.containerssh.io/libcontainerssh/config"
+	"go.containerssh.io/libcontainerssh/internal/auth"
+	"go.containerssh.io/libcontainerssh/internal/sshserver"
+	"go.containerssh.io/libcontainerssh/log"
+	"go.containerssh.io/libcontainerssh/metadata"
 )
 
 type networkHandler struct {
 	config  config2.SecurityConfig
 	backend sshserver.NetworkConnectionHandler
 	logger  log.Logger
+	ctx     ssh.Context
 }
 
 func (n *networkHandler) OnAuthKeyboardInteractive(
@@ -33,6 +35,10 @@ func (n *networkHandler) OnAuthKeyboardInteractive(
 
 func (n *networkHandler) OnShutdown(shutdownContext context.Context) {
 	n.backend.OnShutdown(shutdownContext)
+}
+
+func (n *networkHandler) Context() ssh.Context {
+	return n.backend.Context()
 }
 
 func (n *networkHandler) OnAuthPassword(meta metadata.ConnectionAuthPendingMetadata, password []byte) (
@@ -59,12 +65,12 @@ func (n *networkHandler) OnHandshakeFailed(meta metadata.ConnectionMetadata, rea
 	n.backend.OnHandshakeFailed(meta, reason)
 }
 
-func (n *networkHandler) OnHandshakeSuccess(meta metadata.ConnectionAuthenticatedMetadata) (
+func (n *networkHandler) OnHandshakeSuccess(meta metadata.ConnectionAuthenticatedMetadata, ctx ssh.Context) (
 	connection sshserver.SSHConnectionHandler,
 	metadata metadata.ConnectionAuthenticatedMetadata,
 	failureReason error,
 ) {
-	backend, _, failureReason := n.backend.OnHandshakeSuccess(meta)
+	backend, _, failureReason := n.backend.OnHandshakeSuccess(meta, ctx)
 	if failureReason != nil {
 		return nil, meta, failureReason
 	}

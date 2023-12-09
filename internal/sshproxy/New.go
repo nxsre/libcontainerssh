@@ -4,10 +4,10 @@ import (
 	"net"
 	"sync"
 
-    "go.containerssh.io/libcontainerssh/config"
-    "go.containerssh.io/libcontainerssh/internal/metrics"
-    "go.containerssh.io/libcontainerssh/internal/sshserver"
-    "go.containerssh.io/libcontainerssh/log"
+	"go.containerssh.io/libcontainerssh/config"
+	"go.containerssh.io/libcontainerssh/internal/metrics"
+	"go.containerssh.io/libcontainerssh/internal/sshserver"
+	"go.containerssh.io/libcontainerssh/log"
 )
 
 func New(
@@ -27,7 +27,8 @@ func New(
 
 	privateKey, err := config.LoadPrivateKey()
 	if err != nil {
-		return nil, err
+		logger.Error(err)
+		//return nil, err
 	}
 
 	return &networkConnectionHandler{

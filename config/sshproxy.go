@@ -18,13 +18,22 @@ type SSHProxyConfig struct {
 	// Port is the TCP port to connect to.
 	Port uint16 `json:"port" yaml:"port" default:"22"`
 	// UsernamePassThrough means that the username should be taken from the connecting client.
-	UsernamePassThrough bool `json:"usernamePassThrough" yaml:"usernamePassThrough"`
+	UsernamePassThrough   bool `json:"usernamePassThrough" yaml:"usernamePassThrough"`
+	PasswordPassThrough   bool `json:"passwordPassThrough" yaml:"passwordPassThrough"`
+	PrivateKeyPassThrough bool `json:"privateKeyPassThrough" yaml:"privateKeyPassThrough"`
+
+	ProxyJump *ProxyConfig `json:"proxyJump" yaml:"proxyJump"`
+
+	PubKeys SSHPubKeyList `json:"pubKeys" yaml:"pubKeys"`
+
 	// Username is the username to pass to the backing SSH server for authentication.
 	Username string `json:"username" yaml:"username"`
 	// Password is the password to offer to the backing SSH server for authentication.
 	Password string `json:"password" yaml:"password"`
 	// PrivateKey is the private key to use for authenticating with the backing server.
 	PrivateKey string `json:"privateKey" yaml:"privateKey"`
+	// StrictHostKeyChecking
+	StrictHostKeyChecking bool `json:"strictHostKeyChecking" yaml:"strictHostKeyChecking"`
 	// AllowedHostKeyFingerprints lists which fingerprints we accept
 	AllowedHostKeyFingerprints SSHProxyAllowedHostKeyFingerprints `json:"allowedHostKeyFingerprints" yaml:"allowedHostKeyFingerprints"`
 	// Ciphers are the ciphers supported for the backend connection.
@@ -57,9 +66,9 @@ func (c SSHProxyConfig) Validate() error {
 	if c.Username == "" && !c.UsernamePassThrough {
 		return newError("username", "username cannot be empty when usernamePassThrough is not set")
 	}
-	if len(c.AllowedHostKeyFingerprints) == 0 {
-		return newError("allowedHostKeyFingerprints", "allowedHostKeyFingerprints cannot be empty")
-	}
+	//if len(c.AllowedHostKeyFingerprints) == 0 {
+	//	return newError("allowedHostKeyFingerprints", "allowedHostKeyFingerprints cannot be empty")
+	//}
 	if err := c.Ciphers.Validate(); err != nil {
 		return wrap(err, "ciphers")
 	}

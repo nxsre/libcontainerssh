@@ -159,5 +159,14 @@ const EAuthKerberosUsernameDoesNotMatch = "KRB_USERNAME_DOES_NOT_MATCH"
 // EAuthKerberosBackendError indicates that there was an error contacting the authorization server
 const EAuthKerberosBackendError = "KRB_BACKEND_ERROR"
 
+// EAuthPAMVerificationFailed indicates that there was an error verifying the kerberos ticket sent by the client
+const EAuthPAMVerificationFailed = "PAM_VERIFY_ERROR"
+
+// EAuthPAMUsernameDoesNotMatch indicates that the user tried to a user other than their own and enforceUsername was set to on
+const EAuthPAMUsernameDoesNotMatch = "PAM_USERNAME_DOES_NOT_MATCH"
+
+// EAuthPAMBackendError indicates that there was an error contacting the authorization server
+const EAuthPAMBackendError = "PAM_BACKEND_ERROR"
+
 // EAuthzFailed indicates that the authorization server rejected the user
 const EAuthzFailed = "AUTHZ_FAILED"

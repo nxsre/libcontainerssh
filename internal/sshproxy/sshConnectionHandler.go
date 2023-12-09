@@ -3,27 +3,29 @@ package sshproxy
 import (
 	"context"
 	"errors"
+	"github.com/gliderlabs/ssh"
 	"io"
 	"sync"
 
-    ssh2 "go.containerssh.io/libcontainerssh/internal/ssh"
-    "go.containerssh.io/libcontainerssh/internal/sshserver"
-    "go.containerssh.io/libcontainerssh/log"
-    "go.containerssh.io/libcontainerssh/message"
-    "go.containerssh.io/libcontainerssh/metadata"
-	"golang.org/x/crypto/ssh"
+	ssh2 "go.containerssh.io/libcontainerssh/internal/ssh"
+	"go.containerssh.io/libcontainerssh/internal/sshserver"
+	"go.containerssh.io/libcontainerssh/log"
+	"go.containerssh.io/libcontainerssh/message"
+	"go.containerssh.io/libcontainerssh/metadata"
+	gossh "golang.org/x/crypto/ssh"
 )
 
 type sshConnectionHandler struct {
 	networkHandler *networkConnectionHandler
-	sshConn        ssh.Conn
+	sshConn        gossh.Conn
 	logger         log.Logger
 
 	forwardMu      sync.Mutex
 	reverseHandler sshserver.ReverseForward
+	ctx            ssh.Context
 }
 
-func (s *sshConnectionHandler) handleRequests(requests <-chan *ssh.Request) {
+func (s *sshConnectionHandler) handleRequests(requests <-chan *gossh.Request) {
 	for {
 		req, ok := <-requests
 		if !ok {
@@ -38,7 +40,7 @@ func (s *sshConnectionHandler) handleRequests(requests <-chan *ssh.Request) {
 	}
 }
 
-func (s *sshConnectionHandler) handleChannels(newChannels <-chan ssh.NewChannel) {
+func (s *sshConnectionHandler) handleChannels(newChannels <-chan gossh.NewChannel) {
 	for {
 		newChannel, ok := <-newChannels
 		if !ok {
@@ -52,12 +54,13 @@ func (s *sshConnectionHandler) handleChannels(newChannels <-chan ssh.NewChannel)
 		case "forwarded-tcpip":
 			s.handleReverseForwardChannel(newChannel)
 		default:
-			_ = newChannel.Reject(ssh.Prohibited, "Unsupported channel type")
+			_ = newChannel.Reject(gossh.Prohibited, "Unsupported channel type")
 		}
 	}
+	s.logger.Info("handleChannels done", s.sshConn.Close())
 }
 
-func (s *sshConnectionHandler) rejectAllRequests(req <-chan *ssh.Request) {
+func (s *sshConnectionHandler) rejectAllRequests(req <-chan *gossh.Request) {
 	for {
 		req, ok := <-req
 		if !ok {
@@ -78,9 +81,9 @@ func (s *sshConnectionHandler) handleForward(closer *sync.Once, reader io.ReadCl
 	})
 }
 
-func (s *sshConnectionHandler) handleReverseForwardChannel(newChannel ssh.NewChannel) {
+func (s *sshConnectionHandler) handleReverseForwardChannel(newChannel gossh.NewChannel) {
 	var payload ssh2.ForwardTCPChannelOpenPayload
-	err := ssh.Unmarshal(newChannel.ExtraData(), &payload)
+	err := gossh.Unmarshal(newChannel.ExtraData(), &payload)
 	if err != nil {
 		m := message.Wrap(
 			err,
@@ -116,9 +119,9 @@ func (s *sshConnectionHandler) handleReverseForwardChannel(newChannel ssh.NewCha
 	go s.handleForward(&once, clientChannel, serverChannel)
 }
 
-func (s *sshConnectionHandler) handleStreamLocalChannel(newChannel ssh.NewChannel) {
+func (s *sshConnectionHandler) handleStreamLocalChannel(newChannel gossh.NewChannel) {
 	var payload ssh2.StreamLocalForwardRequestPayload
-	err := ssh.Unmarshal(newChannel.ExtraData(), &payload)
+	err := gossh.Unmarshal(newChannel.ExtraData(), &payload)
 	if err != nil {
 		m := message.Wrap(
 			err,
@@ -154,9 +157,9 @@ func (s *sshConnectionHandler) handleStreamLocalChannel(newChannel ssh.NewChanne
 	go s.handleForward(&once, clientChannel, serverChannel)
 }
 
-func (s *sshConnectionHandler) handleX11Channel(newChannel ssh.NewChannel) {
+func (s *sshConnectionHandler) handleX11Channel(newChannel gossh.NewChannel) {
 	var payload ssh2.X11ChanOpenRequestPayload
-	err := ssh.Unmarshal(newChannel.ExtraData(), &payload)
+	err := gossh.Unmarshal(newChannel.ExtraData(), &payload)
 	if err != nil {
 		m := message.Wrap(
 			err,
@@ -209,7 +212,7 @@ func (s *sshConnectionHandler) OnSessionChannel(
 	s.networkHandler.lock.Lock()
 	if s.networkHandler.done {
 		failureReason = sshserver.NewChannelRejection(
-			ssh.ConnectionFailed,
+			gossh.ConnectionFailed,
 			message.ESSHProxyShuttingDown,
 			"Cannot open session.",
 			"Rejected new session because connection is closing.",
@@ -222,7 +225,7 @@ func (s *sshConnectionHandler) OnSessionChannel(
 	s.logger.Debug(message.NewMessage(message.MSSHProxySession, "Opening new session on SSH backend..."))
 	backingChannel, requests, err := s.sshConn.OpenChannel("session", extraData)
 	if err != nil {
-		realErr := &ssh.OpenChannelError{}
+		realErr := &gossh.OpenChannelError{}
 		if errors.As(err, &realErr) {
 			failureReason = sshserver.NewChannelRejection(
 				realErr.Reason,
@@ -233,7 +236,7 @@ func (s *sshConnectionHandler) OnSessionChannel(
 			)
 		} else {
 			failureReason = sshserver.NewChannelRejection(
-				ssh.ConnectionFailed,
+				gossh.ConnectionFailed,
 				message.ESSHProxyBackendSessionFailed,
 				"Cannot open session.",
 				"Backend rejected channel with message: %s",
@@ -273,7 +276,7 @@ func (s *sshConnectionHandler) OnTCPForwardChannel(
 	if s.networkHandler.done {
 		s.networkHandler.lock.Unlock()
 		failureReason = sshserver.NewChannelRejection(
-			ssh.ConnectionFailed,
+			gossh.ConnectionFailed,
 			message.ESSHProxyShuttingDown,
 			"Cannot open forward.",
 			"Rejected new forwarding because connection is closing.",
@@ -290,10 +293,10 @@ func (s *sshConnectionHandler) OnTCPForwardChannel(
 		OriginatorAddress: originatorHost,
 		OriginatorPort:    originatorPort,
 	}
-	mar := ssh.Marshal(payload)
+	mar := gossh.Marshal(payload)
 	backingChannel, req, err := s.sshConn.OpenChannel("direct-tcpip", mar)
 	if err != nil {
-		realErr := &ssh.OpenChannelError{}
+		realErr := &gossh.OpenChannelError{}
 		if errors.As(err, &realErr) {
 			failureReason = sshserver.NewChannelRejection(
 				realErr.Reason,
@@ -304,7 +307,7 @@ func (s *sshConnectionHandler) OnTCPForwardChannel(
 			)
 		} else {
 			failureReason = sshserver.NewChannelRejection(
-				ssh.ConnectionFailed,
+				gossh.ConnectionFailed,
 				message.ESSHProxyBackendForwardFailed,
 				"Cannot open session.",
 				"Backend rejected channel with message: %s",
@@ -330,7 +333,7 @@ func (s *sshConnectionHandler) OnRequestTCPReverseForward(
 		Address: bindHost,
 		Port:    bindPort,
 	}
-	mar := ssh.Marshal(payload)
+	mar := gossh.Marshal(payload)
 	ok, _, err := s.sshConn.SendRequest(string(ssh2.RequestTypeReverseForward), true, mar)
 	if err != nil {
 		return err
@@ -357,7 +360,7 @@ func (s *sshConnectionHandler) OnRequestCancelTCPReverseForward(
 		Address: bindHost,
 		Port:    bindPort,
 	}
-	mar := ssh.Marshal(payload)
+	mar := gossh.Marshal(payload)
 	ok, _, err := s.sshConn.SendRequest(string(ssh2.RequestTypeCancelReverseForward), true, mar)
 	if err != nil {
 		return err
@@ -382,10 +385,10 @@ func (s *sshConnectionHandler) OnDirectStreamLocal(
 	payload := ssh2.DirectStreamLocalChannelOpenPayload{
 		SocketPath: path,
 	}
-	mar := ssh.Marshal(payload)
+	mar := gossh.Marshal(payload)
 	backingChannel, req, err := s.sshConn.OpenChannel(sshserver.ChannelTypeDirectStreamLocal, mar)
 	if err != nil {
-		realErr := &ssh.OpenChannelError{}
+		realErr := &gossh.OpenChannelError{}
 		if errors.As(err, &realErr) {
 			failureReason = sshserver.NewChannelRejection(
 				realErr.Reason,
@@ -396,7 +399,7 @@ func (s *sshConnectionHandler) OnDirectStreamLocal(
 			)
 		} else {
 			failureReason = sshserver.NewChannelRejection(
-				ssh.ConnectionFailed,
+				gossh.ConnectionFailed,
 				message.ESSHProxyBackendForwardFailed,
 				"Cannot open session.",
 				"Backend rejected channel with message: %s",
@@ -420,7 +423,7 @@ func (s *sshConnectionHandler) OnRequestStreamLocal(
 	payload := ssh2.StreamLocalForwardRequestPayload{
 		SocketPath: path,
 	}
-	mar := ssh.Marshal(payload)
+	mar := gossh.Marshal(payload)
 	ok, _, err := s.sshConn.SendRequest(string(ssh2.RequestTypeStreamLocalForward), true, mar)
 	if err != nil {
 		return err
@@ -445,7 +448,7 @@ func (s *sshConnectionHandler) OnRequestCancelStreamLocal(
 	payload := ssh2.StreamLocalForwardRequestPayload{
 		SocketPath: path,
 	}
-	mar := ssh.Marshal(payload)
+	mar := gossh.Marshal(payload)
 	ok, _, err := s.sshConn.SendRequest(string(ssh2.RequestTypeCancelStreamLocalForward), true, mar)
 	if err != nil {
 		return err
@@ -462,4 +465,8 @@ func (s *sshConnectionHandler) OnRequestCancelStreamLocal(
 }
 
 func (s *sshConnectionHandler) OnShutdown(_ context.Context) {
+}
+
+func (s *sshConnectionHandler) Context() ssh.Context {
+	return s.networkHandler.Context()
 }

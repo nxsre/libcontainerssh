@@ -3,6 +3,7 @@ package auditlogintegration_test
 import (
 	"context"
 	"fmt"
+	"github.com/gliderlabs/ssh"
 	"io"
 	"os"
 	"testing"
@@ -21,7 +22,7 @@ import (
 	"go.containerssh.io/libcontainerssh/log"
 	message2 "go.containerssh.io/libcontainerssh/message"
 	"go.containerssh.io/libcontainerssh/metadata"
-	"golang.org/x/crypto/ssh"
+	gossh "golang.org/x/crypto/ssh"
 )
 
 func TestKeyboardInteractiveAuthentication(t *testing.T) {
@@ -204,6 +205,11 @@ type backendHandler struct {
 	session sshserver.SessionChannel
 }
 
+func (b *backendHandler) Context() ssh.Context {
+	//TODO implement me
+	panic("implement me")
+}
+
 func (b *backendHandler) OnAuthKeyboardInteractive(
 	meta metadata.ConnectionAuthPendingMetadata,
 	challenge func(
@@ -330,7 +336,7 @@ func (s *backendHandler) OnTCPForwardChannel(
 	originatorHost string,
 	originatorPort uint32,
 ) (channel sshserver.ForwardChannel, failureReason sshserver.ChannelRejection) {
-	return nil, sshserver.NewChannelRejection(ssh.Prohibited, message2.ESSHNotImplemented, "Forwarding channel unimplemented", "Forwarding channel unimplemented")
+	return nil, sshserver.NewChannelRejection(gossh.Prohibited, message2.ESSHNotImplemented, "Forwarding channel unimplemented", "Forwarding channel unimplemented")
 }
 
 func (s *backendHandler) OnRequestTCPReverseForward(
@@ -352,7 +358,7 @@ func (s *backendHandler) OnDirectStreamLocal(
 	channelID uint64,
 	path string,
 ) (channel sshserver.ForwardChannel, failureReason sshserver.ChannelRejection) {
-	return nil, sshserver.NewChannelRejection(ssh.Prohibited, message2.ESSHNotImplemented, "Streamlocal Forwarding unimplemented", "Streamlocal Forwarding unimplemented")
+	return nil, sshserver.NewChannelRejection(gossh.Prohibited, message2.ESSHNotImplemented, "Streamlocal Forwarding unimplemented", "Streamlocal Forwarding unimplemented")
 }
 
 func (s *backendHandler) OnRequestStreamLocal(
@@ -393,7 +399,7 @@ func (b *backendHandler) OnAuthGSSAPI(_ metadata.ConnectionMetadata) auth.GSSAPI
 
 func (b *backendHandler) OnHandshakeFailed(_ metadata.ConnectionMetadata, _ error) {}
 
-func (b *backendHandler) OnHandshakeSuccess(meta metadata.ConnectionAuthenticatedMetadata) (
+func (b *backendHandler) OnHandshakeSuccess(meta metadata.ConnectionAuthenticatedMetadata, ctx ssh.Context) (
 	connection sshserver.SSHConnectionHandler,
 	metadata metadata.ConnectionAuthenticatedMetadata,
 	failureReason error,

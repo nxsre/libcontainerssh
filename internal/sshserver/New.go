@@ -3,12 +3,12 @@ package sshserver
 import (
 	"sync"
 
-    "go.containerssh.io/libcontainerssh/config"
-    "go.containerssh.io/libcontainerssh/log"
+	"go.containerssh.io/libcontainerssh/config"
+	"go.containerssh.io/libcontainerssh/log"
 )
 
 // New creates a new SSH server ready to be run. It may return an error if the configuration is invalid.
-func New(cfg config.SSHConfig, handler Handler, logger log.Logger) (Server, error) {
+func New(cfgFile string, cfg config.SSHConfig, handler Handler, logger log.Logger) (Server, error) {
 	if err := cfg.Validate(); err != nil {
 		return nil, err
 	}
@@ -17,6 +17,7 @@ func New(cfg config.SSHConfig, handler Handler, logger log.Logger) (Server, erro
 		return nil, err
 	}
 	return &serverImpl{
+		configFile:   cfgFile,
 		cfg:          cfg,
 		handler:      handler,
 		logger:       logger,

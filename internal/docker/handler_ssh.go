@@ -3,14 +3,15 @@ package docker
 import (
 	"context"
 	"fmt"
+	"github.com/gliderlabs/ssh"
 	"io"
 
-    "go.containerssh.io/libcontainerssh/config"
-    "go.containerssh.io/libcontainerssh/internal/agentforward"
-    "go.containerssh.io/libcontainerssh/internal/sshserver"
-    "go.containerssh.io/libcontainerssh/metadata"
-    "go.containerssh.io/libcontainerssh/message"
-	"golang.org/x/crypto/ssh"
+	"go.containerssh.io/libcontainerssh/config"
+	"go.containerssh.io/libcontainerssh/internal/agentforward"
+	"go.containerssh.io/libcontainerssh/internal/sshserver"
+	"go.containerssh.io/libcontainerssh/message"
+	"go.containerssh.io/libcontainerssh/metadata"
+	gossh "golang.org/x/crypto/ssh"
 )
 
 type sshConnectionHandler struct {
@@ -28,6 +29,10 @@ func (s *sshConnectionHandler) OnUnsupportedChannel(_ uint64, _ string, _ []byte
 
 func (s *sshConnectionHandler) OnShutdown(context context.Context) {
 	s.agentForward.OnShutdown()
+}
+
+func (s *sshConnectionHandler) Context() ssh.Context {
+	return s.networkHandler.Context()
 }
 
 func (s *sshConnectionHandler) OnSessionChannel(
@@ -65,7 +70,7 @@ func (s *sshConnectionHandler) OnTCPForwardChannel(
 		originatorPort,
 	)
 	if err != nil {
-		return nil, sshserver.NewChannelRejection(ssh.ConnectionFailed, message.EDockerForwardingFailed, "Error setting up the forwarding", "Error setting up the forwarding")
+		return nil, sshserver.NewChannelRejection(gossh.ConnectionFailed, message.EDockerForwardingFailed, "Error setting up the forwarding", "Error setting up the forwarding")
 	}
 	return channel, nil
 }
@@ -101,7 +106,7 @@ func (s *sshConnectionHandler) OnDirectStreamLocal(
 		path,
 	)
 	if err != nil {
-		return nil, sshserver.NewChannelRejection(ssh.ConnectionFailed, message.EDockerForwardingFailed, "Error setting up the forwarding", "Error setting up the forwarding (%s)", err)
+		return nil, sshserver.NewChannelRejection(gossh.ConnectionFailed, message.EDockerForwardingFailed, "Error setting up the forwarding", "Error setting up the forwarding (%s)", err)
 	}
 	return channel, nil
 }
