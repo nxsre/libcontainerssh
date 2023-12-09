@@ -36,11 +36,16 @@ func TestAuthentication(t *testing.T) {
 	defer lifecycle.Stop(context.Background())
 
 <<<<<<< Updated upstream
+<<<<<<< Updated upstream
 	testConnection(t, "foo", ssh.Password("bar"), sshServerConfig, true)
 	testConnection(t, "foo", ssh.Password("baz"), sshServerConfig, false)
 
 	testConnection(t, "foonoauthz", ssh.Password("bar"), sshServerConfig, false)
 	testConnection(t, "foonoauthz", ssh.Password("baz"), sshServerConfig, false)
+=======
+	testConnection(t, gossh.Password("bar"), sshServerConfig, true)
+	testConnection(t, gossh.Password("baz"), sshServerConfig, false)
+>>>>>>> Stashed changes
 =======
 	testConnection(t, gossh.Password("bar"), sshServerConfig, true)
 	testConnection(t, gossh.Password("baz"), sshServerConfig, false)
@@ -128,17 +133,23 @@ func startSSHServer(t *testing.T, logger log.Logger, authServerPort int) (config
 }
 
 <<<<<<< Updated upstream
+<<<<<<< Updated upstream
 func testConnection(t *testing.T, username string, authMethod ssh.AuthMethod, sshServerConfig config.SSHConfig, success bool) {
 	clientConfig := ssh.ClientConfig{
 		Config: ssh.Config{},
 		User:   username,
 		Auth:   []ssh.AuthMethod{authMethod},
 =======
+=======
+>>>>>>> Stashed changes
 func testConnection(t *testing.T, authMethod gossh.AuthMethod, sshServerConfig config.SSHConfig, success bool) {
 	clientConfig := gossh.ClientConfig{
 		Config: gossh.Config{},
 		User:   "foo",
 		Auth:   []gossh.AuthMethod{authMethod},
+<<<<<<< Updated upstream
+>>>>>>> Stashed changes
+=======
 >>>>>>> Stashed changes
 		// We don't care about host key verification for this test.
 		HostKeyCallback: gossh.InsecureIgnoreHostKey(), //nolint:gosec

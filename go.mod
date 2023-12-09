@@ -5,10 +5,6 @@ go 1.18
 require (
 	github.com/ScaleFT/sshkeys v1.2.0
 	github.com/aws/aws-sdk-go v1.44.316
-	github.com/containerd/console v1.0.3
-	github.com/containerssh/gokrb5/v8 v8.4.3-0.20211214150832-4bf8b91123af
-	github.com/creack/pty v1.1.18
-	github.com/creasty/defaults v1.5.2
 	github.com/docker/distribution v2.8.2+incompatible
 	github.com/docker/docker v23.0.5+incompatible
 	github.com/docker/go-connections v0.4.0
