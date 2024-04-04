@@ -5,12 +5,12 @@ import (
 	"reflect"
 	"sync"
 
-    "go.containerssh.io/libcontainerssh/config"
-    "go.containerssh.io/libcontainerssh/internal/metrics"
-    "go.containerssh.io/libcontainerssh/internal/sshserver"
-    "go.containerssh.io/libcontainerssh/internal/structutils"
-    log2 "go.containerssh.io/libcontainerssh/log"
-    "go.containerssh.io/libcontainerssh/message"
+	"go.containerssh.io/libcontainerssh/config"
+	"go.containerssh.io/libcontainerssh/internal/metrics"
+	"go.containerssh.io/libcontainerssh/internal/sshserver"
+	"go.containerssh.io/libcontainerssh/internal/structutils"
+	log2 "go.containerssh.io/libcontainerssh/log"
+	"go.containerssh.io/libcontainerssh/message"
 )
 
 // New creates a new NetworkConnectionHandler for a specific client.
@@ -45,7 +45,7 @@ func New(
 		config:       cfg,
 		logger:       logger,
 		disconnected: false,
-		dockerClientFactory: &dockerV20ClientFactory{
+		dockerClientFactory: &dockerV26ClientFactory{
 			backendFailuresMetric: backendFailuresMetric,
 			backendRequestsMetric: backendRequestsMetric,
 		},

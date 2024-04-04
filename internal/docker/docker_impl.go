@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/docker/docker/api/types/image"
 	"github.com/docker/docker/errdefs"
 	"io"
 	"strconv"
@@ -26,14 +27,14 @@ import (
 	"go.containerssh.io/libcontainerssh/message"
 )
 
-type dockerV20ClientFactory struct {
+type dockerV26ClientFactory struct {
 	// backendFailuresMetric counts the failed requests to the backend.
 	backendFailuresMetric metrics.SimpleCounter
 	// backendRequestsMetric counts the requests to the backend.
 	backendRequestsMetric metrics.SimpleCounter
 }
 
-func (f *dockerV20ClientFactory) getDockerClient(ctx context.Context, config config.DockerConfig) (*client.Client, error) {
+func (f *dockerV26ClientFactory) getDockerClient(ctx context.Context, config config.DockerConfig) (*client.Client, error) {
 	httpClient, err := getHTTPClient(config)
 	if err != nil {
 		return nil, err
@@ -49,7 +50,7 @@ func (f *dockerV20ClientFactory) getDockerClient(ctx context.Context, config con
 	return cli, nil
 }
 
-func (f *dockerV20ClientFactory) get(ctx context.Context, config config.DockerConfig, logger log.Logger) (dockerClient, error) {
+func (f *dockerV26ClientFactory) get(ctx context.Context, config config.DockerConfig, logger log.Logger) (dockerClient, error) {
 	if config.Execution.DockerLaunchConfig.ContainerConfig == nil || config.Execution.DockerLaunchConfig.ContainerConfig.Image == "" {
 		return nil, message.NewMessage(message.EDockerConfigError, "no image name specified")
 	}
@@ -59,7 +60,7 @@ func (f *dockerV20ClientFactory) get(ctx context.Context, config config.DockerCo
 		return nil, err
 	}
 
-	return &dockerV20Client{
+	return &dockerV26Client{
 		config:       config,
 		dockerClient: dockerClient,
 		logger:       logger,
@@ -69,7 +70,7 @@ func (f *dockerV20ClientFactory) get(ctx context.Context, config config.DockerCo
 	}, nil
 }
 
-type dockerV20Client struct {
+type dockerV26Client struct {
 	config       config.DockerConfig
 	dockerClient *client.Client
 	logger       log.Logger
@@ -80,11 +81,11 @@ type dockerV20Client struct {
 	backendRequestsMetric metrics.SimpleCounter
 }
 
-func (d *dockerV20Client) getImageName() string {
+func (d *dockerV26Client) getImageName() string {
 	return d.config.Execution.DockerLaunchConfig.ContainerConfig.Image
 }
 
-func (d *dockerV20Client) hasImage(ctx context.Context) (bool, error) {
+func (d *dockerV26Client) hasImage(ctx context.Context) (bool, error) {
 	image := d.config.Execution.DockerLaunchConfig.ContainerConfig.Image
 	d.logger.Debug(message.NewMessage(message.MDockerImageList, "Checking if image %s exists locally...", image))
 	var lastError error
@@ -112,13 +113,13 @@ loop:
 	return false, message.Wrap(lastError, message.EDockerFailedImageList, "failed to list images, giving up")
 }
 
-func (d *dockerV20Client) pullImage(ctx context.Context) error {
-	image, err := getCanonicalImageName(d.config.Execution.DockerLaunchConfig.ContainerConfig.Image)
+func (d *dockerV26Client) pullImage(ctx context.Context) error {
+	imageName, err := getCanonicalImageName(d.config.Execution.DockerLaunchConfig.ContainerConfig.Image)
 	if err != nil {
 		return err
 	}
 
-	options := types.ImagePullOptions{}
+	options := image.PullOptions{}
 	if d.config.Execution.Auth != nil {
 		jsonEncodedCredentials, err := json.Marshal(d.config.Execution.Auth)
 		if err != nil {
@@ -128,13 +129,13 @@ func (d *dockerV20Client) pullImage(ctx context.Context) error {
 		options.RegistryAuth = base64.StdEncoding.EncodeToString(jsonEncodedCredentials)
 	}
 
-	d.logger.Debug(message.NewMessage(message.MDockerImagePull, "Pulling image %s...", image))
+	d.logger.Debug(message.NewMessage(message.MDockerImagePull, "Pulling image %s...", imageName))
 	var lastError error
 loop:
 	for {
 		var pullReader io.ReadCloser
 		d.backendRequestsMetric.Increment()
-		pullReader, lastError = d.dockerClient.ImagePull(ctx, image, options)
+		pullReader, lastError = d.dockerClient.ImagePull(ctx, imageName, options)
 		if lastError == nil {
 			_, lastError = io.ReadAll(pullReader)
 			if lastError == nil {
@@ -148,7 +149,7 @@ loop:
 		if pullReader != nil {
 			_ = pullReader.Close()
 		}
-		if client.IsErrUnauthorized(lastError) ||
+		if errdefs.IsUnauthorized(lastError) ||
 			client.IsErrNotFound(lastError) ||
 			strings.Contains(lastError.Error(), "no basic auth credential") {
 			err = message.WrapUser(
@@ -156,7 +157,7 @@ loop:
 				message.EDockerFailedImagePull,
 				UserMessageInitializeSSHSession,
 				"failed to pull image %s, giving up",
-				image,
+				imageName,
 			)
 			d.logger.Debug(err)
 			return err
@@ -166,7 +167,7 @@ loop:
 				lastError,
 				message.EDockerFailedImagePull,
 				"failed to pull image %s, retrying in 10 seconds",
-				image,
+				imageName,
 			))
 		select {
 		case <-ctx.Done():
@@ -182,13 +183,13 @@ loop:
 		message.EDockerFailedImagePull,
 		UserMessageInitializeSSHSession,
 		"failed to pull image %s, giving up",
-		image,
+		imageName,
 	)
 	d.logger.Debug(err)
 	return err
 }
 
-func (d *dockerV20Client) createContainer(
+func (d *dockerV26Client) createContainer(
 	ctx context.Context,
 	labels map[string]string,
 	env map[string]string,
@@ -206,7 +207,7 @@ func (d *dockerV20Client) createContainer(
 	var lastError error
 loop:
 	for {
-		var body container.ContainerCreateCreatedBody
+		var body container.CreateResponse
 		d.backendRequestsMetric.Increment()
 		body, lastError = d.dockerClient.ContainerCreate(
 			ctx,
@@ -217,7 +218,7 @@ loop:
 			d.config.Execution.DockerLaunchConfig.ContainerName,
 		)
 		if lastError == nil {
-			return &dockerV20Container{
+			return &dockerV26Container{
 				config:                d.config,
 				containerID:           body.ID,
 				dockerClient:          d.dockerClient,
@@ -250,7 +251,7 @@ loop:
 	return nil, err
 }
 
-func (d *dockerV20Client) createConfig(
+func (d *dockerV26Client) createConfig(
 	containerConfig *container.Config,
 	labels map[string]string,
 	env map[string]string,
@@ -284,7 +285,7 @@ func (d *dockerV20Client) createConfig(
 	return newConfig, nil
 }
 
-type dockerV20Container struct {
+type dockerV26Container struct {
 	config                config.DockerConfig
 	containerID           string
 	logger                log.Logger
@@ -299,7 +300,7 @@ type dockerV20Container struct {
 	removeLock            *sync.Mutex
 }
 
-func (d *dockerV20Container) attach(ctx context.Context) (dockerExecution, error) {
+func (d *dockerV26Container) attach(ctx context.Context) (dockerExecution, error) {
 	d.logger.Debug(message.NewMessage(message.MDockerContainerAttach, "attaching to container..."))
 	var attachResult types.HijackedResponse
 	var lastError error
@@ -309,7 +310,7 @@ loop:
 		attachResult, lastError = d.dockerClient.ContainerAttach(
 			ctx,
 			d.containerID,
-			types.ContainerAttachOptions{
+			container.AttachOptions{
 				Stream: true,
 				Stdin:  true,
 				Stdout: true,
@@ -318,7 +319,7 @@ loop:
 			},
 		)
 		if lastError == nil {
-			return &dockerV20Exec{
+			return &dockerV26Exec{
 				container:    d,
 				execID:       "",
 				dockerClient: d.dockerClient,
@@ -350,7 +351,7 @@ loop:
 	return nil, err
 }
 
-func (d *dockerV20Container) start(ctx context.Context) error {
+func (d *dockerV26Container) start(ctx context.Context) error {
 	d.logger.Debug(message.NewMessage(message.MDockerContainerStart, "Starting container..."))
 	var lastError error
 loop:
@@ -359,7 +360,7 @@ loop:
 		lastError = d.dockerClient.ContainerStart(
 			ctx,
 			d.containerID,
-			types.ContainerStartOptions{},
+			container.StartOptions{},
 		)
 		if lastError == nil {
 			return nil
@@ -384,7 +385,7 @@ loop:
 	return err
 }
 
-func (d *dockerV20Container) writeFile(path string, content []byte) error {
+func (d *dockerV26Container) writeFile(path string, content []byte) error {
 	if d.config.Execution.DisableAgent {
 		return message.NewMessage(
 			message.EDockerWriteFileFailed,
@@ -448,7 +449,7 @@ func (d *dockerV20Container) writeFile(path string, content []byte) error {
 	return nil
 }
 
-func (d *dockerV20Container) remove(ctx context.Context) error {
+func (d *dockerV26Container) remove(ctx context.Context) error {
 	d.removeLock.Lock()
 	defer d.removeLock.Unlock()
 	if d.shuttingDown {
@@ -476,7 +477,7 @@ loop:
 		if lastError == nil {
 			d.backendRequestsMetric.Increment()
 			lastError = d.dockerClient.ContainerRemove(
-				ctx, d.containerID, types.ContainerRemoveOptions{
+				ctx, d.containerID, container.RemoveOptions{
 					Force: true,
 				},
 			)
@@ -512,7 +513,7 @@ loop:
 	return err
 }
 
-func (d *dockerV20Container) createExec(
+func (d *dockerV26Container) createExec(
 	ctx context.Context,
 	program []string,
 	env map[string]string,
@@ -532,7 +533,7 @@ func (d *dockerV20Container) createExec(
 	return d.lockedCreateExec(ctx, program, env, tty)
 }
 
-func (d *dockerV20Container) lockedCreateExec(
+func (d *dockerV26Container) lockedCreateExec(
 	ctx context.Context,
 	program []string,
 	env map[string]string,
@@ -553,7 +554,7 @@ func (d *dockerV20Container) lockedCreateExec(
 	}
 
 	pid := 0
-	return &dockerV20Exec{
+	return &dockerV26Exec{
 		container:    d,
 		execID:       execID,
 		dockerClient: d.dockerClient,
@@ -566,7 +567,7 @@ func (d *dockerV20Container) lockedCreateExec(
 	}, nil
 }
 
-func (d *dockerV20Container) realCreateExec(ctx context.Context, execConfig types.ExecConfig) (string, error) {
+func (d *dockerV26Container) realCreateExec(ctx context.Context, execConfig types.ExecConfig) (string, error) {
 	d.logger.Debug(message.NewMessage(message.MDockerExecCreate, "Creating exec..."))
 	var lastError error
 loop:
@@ -599,7 +600,7 @@ loop:
 	return "", err
 }
 
-func (d *dockerV20Container) createExecConfig(env map[string]string, tty bool, program []string) types.ExecConfig {
+func (d *dockerV26Container) createExecConfig(env map[string]string, tty bool, program []string) types.ExecConfig {
 	dockerEnv := createEnv(env)
 	if !d.config.Execution.DisableAgent {
 		agentPrefix := []string{
@@ -631,7 +632,7 @@ func createEnv(env map[string]string) []string {
 	return dockerEnv
 }
 
-func (d *dockerV20Container) attachExec(ctx context.Context, execID string, config types.ExecConfig) (types.HijackedResponse, error) {
+func (d *dockerV26Container) attachExec(ctx context.Context, execID string, config types.ExecConfig) (types.HijackedResponse, error) {
 	d.logger.Debug(message.NewMessage(message.MDockerExecAttach, "Attaching exec..."))
 	var attachResult types.HijackedResponse
 	var lastError error
@@ -669,8 +670,8 @@ loop:
 	return types.HijackedResponse{}, err
 }
 
-type dockerV20Exec struct {
-	container    *dockerV20Container
+type dockerV26Exec struct {
+	container    *dockerV26Container
 	execID       string
 	dockerClient *client.Client
 	logger       log.Logger
@@ -681,7 +682,7 @@ type dockerV20Exec struct {
 	lock         *sync.Mutex
 }
 
-func (d *dockerV20Exec) term(ctx context.Context) {
+func (d *dockerV26Exec) term(ctx context.Context) {
 	select {
 	case <-d.done():
 		return
@@ -690,7 +691,7 @@ func (d *dockerV20Exec) term(ctx context.Context) {
 	_ = d.signal(ctx, "TERM")
 }
 
-func (d *dockerV20Exec) kill() {
+func (d *dockerV26Exec) kill() {
 	select {
 	case <-d.done():
 		return
@@ -701,11 +702,11 @@ func (d *dockerV20Exec) kill() {
 	}
 }
 
-func (d *dockerV20Exec) done() <-chan struct{} {
+func (d *dockerV26Exec) done() <-chan struct{} {
 	return d.doneChan
 }
 
-func (d *dockerV20Exec) signal(ctx context.Context, sig string) error {
+func (d *dockerV26Exec) signal(ctx context.Context, sig string) error {
 	if d.container.config.Execution.DisableAgent {
 		err := message.UserMessage(
 			message.EDockerCannotSendSignalNoAgent,
@@ -775,7 +776,7 @@ func (d *dockerV20Exec) signal(ctx context.Context, sig string) error {
 	return err
 }
 
-func (d *dockerV20Exec) realSendSignal(ctx context.Context, sig string, pid int) error {
+func (d *dockerV26Exec) realSendSignal(ctx context.Context, sig string, pid int) error {
 	exec, err := d.container.lockedCreateExec(
 		ctx, []string{
 			d.container.config.Execution.AgentPath,
@@ -808,7 +809,7 @@ func (d *dockerV20Exec) realSendSignal(ctx context.Context, sig string, pid int)
 	return err
 }
 
-func (d *dockerV20Exec) sendSignalToContainer(ctx context.Context, sig string) error {
+func (d *dockerV26Exec) sendSignalToContainer(ctx context.Context, sig string) error {
 	d.logger.Debug(
 		message.NewMessage(
 			message.MDockerContainerSignal,
@@ -860,7 +861,7 @@ loop:
 	return err
 }
 
-func (d *dockerV20Exec) resize(ctx context.Context, height uint, width uint) error {
+func (d *dockerV26Exec) resize(ctx context.Context, height uint, width uint) error {
 	d.logger.Debug(
 		message.NewMessage(message.MDockerResizing, "Resizing window to %dx%d", width, height).
 			Label("width", width).
@@ -868,7 +869,7 @@ func (d *dockerV20Exec) resize(ctx context.Context, height uint, width uint) err
 	var lastError error
 loop:
 	for {
-		resizeOptions := types.ResizeOptions{
+		resizeOptions := container.ResizeOptions{
 			Height: height,
 			Width:  width,
 		}
@@ -916,7 +917,7 @@ loop:
 	return err
 }
 
-func (d *dockerV20Exec) readBytesFromReader(source io.Reader, bytes uint) ([]byte, error) {
+func (d *dockerV26Exec) readBytesFromReader(source io.Reader, bytes uint) ([]byte, error) {
 	finalBuffer := make([]byte, bytes)
 	readIndex := uint(0)
 	for {
@@ -933,7 +934,7 @@ func (d *dockerV20Exec) readBytesFromReader(source io.Reader, bytes uint) ([]byt
 	}
 }
 
-func (d *dockerV20Exec) run(
+func (d *dockerV26Exec) run(
 	stdin io.Reader,
 	stdout io.Writer,
 	stderr io.Writer,
@@ -963,7 +964,7 @@ func (d *dockerV20Exec) run(
 	go d.processInput(stdin, once, exitFunc)
 }
 
-func (d *dockerV20Exec) processInput(stdin io.Reader, once *sync.Once, exitFunc func()) {
+func (d *dockerV26Exec) processInput(stdin io.Reader, once *sync.Once, exitFunc func()) {
 	func() {
 		defer once.Do(exitFunc)
 		_, err := io.Copy(d.attachResult.Conn, stdin)
@@ -988,7 +989,7 @@ func (d *dockerV20Exec) processInput(stdin io.Reader, once *sync.Once, exitFunc 
 	}()
 }
 
-func (d *dockerV20Exec) processOutput(
+func (d *dockerV26Exec) processOutput(
 	once *sync.Once,
 	exitFunc func(),
 	stdout io.Writer,
@@ -1024,7 +1025,7 @@ func (d *dockerV20Exec) processOutput(
 	}()
 }
 
-func (d *dockerV20Exec) readPIDFromStdout(stdout io.Writer) error {
+func (d *dockerV26Exec) readPIDFromStdout(stdout io.Writer) error {
 	// Read PID from execution
 	var pidBytes []byte
 	var err error
@@ -1077,7 +1078,7 @@ func (d *dockerV20Exec) readPIDFromStdout(stdout io.Writer) error {
 	return nil
 }
 
-func (d *dockerV20Exec) finished(onExit func(exitStatus int)) {
+func (d *dockerV26Exec) finished(onExit func(exitStatus int)) {
 	d.lock.Lock()
 	if d.pid == -1 {
 		d.lock.Unlock()
@@ -1131,7 +1132,7 @@ loop:
 	d.logger.Error(err)
 }
 
-func (d *dockerV20Exec) containerInspect(
+func (d *dockerV26Exec) containerInspect(
 	ctx context.Context,
 	onExit func(exitStatus int),
 ) (lastError error) {
@@ -1153,7 +1154,7 @@ func (d *dockerV20Exec) containerInspect(
 	return lastError
 }
 
-func (d *dockerV20Exec) execInspect(ctx context.Context, onExit func(exitStatus int)) (lastError error) {
+func (d *dockerV26Exec) execInspect(ctx context.Context, onExit func(exitStatus int)) (lastError error) {
 	var inspectResult types.ContainerExecInspect
 	inspectResult, lastError = d.dockerClient.ContainerExecInspect(ctx, d.execID)
 	if lastError == nil {
@@ -1176,7 +1177,7 @@ func (d *dockerV20Exec) execInspect(ctx context.Context, onExit func(exitStatus 
 	return lastError
 }
 
-func (d *dockerV20Exec) stopContainer(ctx context.Context) error {
+func (d *dockerV26Exec) stopContainer(ctx context.Context) error {
 	d.logger.Debug(message.NewMessage(message.MDockerContainerStop, "Stopping container..."))
 	var lastError error
 loop:

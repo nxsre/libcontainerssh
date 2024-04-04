@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"net"
 
-	"github.com/tknie/pam"
+	pam "github.com/msteinert/pam/v2"
 	"go.containerssh.io/libcontainerssh/config"
 	"go.containerssh.io/libcontainerssh/log"
 	"go.containerssh.io/libcontainerssh/metadata"

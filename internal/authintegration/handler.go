@@ -292,6 +292,11 @@ type authzNetworkConnectionHandler struct {
 	authorizationProvider auth.AuthzProvider
 }
 
+func (a *authzNetworkConnectionHandler) Context() ssh.Context {
+	//TODO implement me
+	panic("implement me")
+}
+
 // genericAuthorization is a helper function that takes the response of an authentication call (e.g. OnAuthPassword) and performs authorization.
 func (a *authzNetworkConnectionHandler) genericAuthorization(
 	meta metadata.ConnectionAuthPendingMetadata,
@@ -354,8 +359,8 @@ func (a *authzNetworkConnectionHandler) OnHandshakeFailed(metadata metadata.Conn
 // OnHandshakeSuccess is called when the SSH handshake was successful. It returns metadata to process
 // requests, or failureReason to indicate that a backend error has happened. In this case, the
 // metadata will be closed and OnDisconnect will be called.
-func (a *authzNetworkConnectionHandler) OnHandshakeSuccess(metadata metadata.ConnectionAuthenticatedMetadata) (connection sshserver.SSHConnectionHandler, meta metadata.ConnectionAuthenticatedMetadata, failureReason error) {
-	return a.backend.OnHandshakeSuccess(metadata)
+func (a *authzNetworkConnectionHandler) OnHandshakeSuccess(metadata metadata.ConnectionAuthenticatedMetadata, s ssh.Context) (connection sshserver.SSHConnectionHandler, meta metadata.ConnectionAuthenticatedMetadata, failureReason error) {
+	return a.backend.OnHandshakeSuccess(metadata, s)
 }
 
 // OnDisconnect is called when the network connection is closed.

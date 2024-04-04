@@ -6,9 +6,9 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/network"
+	"github.com/docker/docker/api/types/registry"
 	specs "github.com/opencontainers/image-spec/specs-go/v1"
 	"gopkg.in/yaml.v3"
 )
@@ -98,7 +98,7 @@ type DockerExecutionConfig struct {
 	DockerLaunchConfig `json:",inline" yaml:",inline"`
 
 	// Auth contains the image registry authentication config
-	Auth *types.AuthConfig `json:"auth" yaml:"auth"`
+	Auth *registry.AuthConfig `json:"auth" yaml:"auth"`
 
 	// Mode influences how commands are executed.
 	//
@@ -132,18 +132,18 @@ type DockerExecutionConfig struct {
 }
 
 type tmpDockerExecutionConfig struct {
-	Auth            interface{}         `json:"auth" yaml:"auth"`
-	ContainerConfig interface{}         `json:"container" yaml:"container"`
-	HostConfig      interface{}         `json:"host" yaml:"host"`
-	NetworkConfig   interface{}         `json:"network" yaml:"network"`
-	Platform        interface{}         `json:"platform" yaml:"platform"`
-	ContainerName   interface{}         `json:"containername" yaml:"containername"`
-	Mode            DockerExecutionMode `json:"mode" yaml:"mode" default:"connection"`
-	IdleCommand     []string            `json:"idleCommand" yaml:"idleCommand" comment:"Run this command to wait for container exit" default:"[\"/usr/bin/containerssh-agent\", \"wait-signal\", \"--signal\", \"INT\", \"--signal\", \"TERM\"]"`
-	ShellCommand    []string            `json:"shellCommand" yaml:"shellCommand" comment:"Run this command as a default shell." default:"[\"/bin/bash\"]"`
-	AgentPath       string              `json:"agentPath" yaml:"agentPath" default:"/usr/bin/containerssh-agent"`
-	DisableAgent    bool                `json:"disableAgent" yaml:"disableAgent"`
-	Subsystems      map[string]string   `json:"subsystems" yaml:"subsystems" comment:"Subsystem names and binaries map." default:"{\"sftp\":\"/usr/lib/openssh/sftp-server\"}"`
+	Auth                    interface{}           `json:"auth" yaml:"auth"`
+	ContainerConfig         interface{}           `json:"container" yaml:"container"`
+	HostConfig              interface{}           `json:"host" yaml:"host"`
+	NetworkConfig           interface{}           `json:"network" yaml:"network"`
+	Platform                interface{}           `json:"platform" yaml:"platform"`
+	ContainerName           interface{}           `json:"containername" yaml:"containername"`
+	Mode                    DockerExecutionMode   `json:"mode" yaml:"mode" default:"connection"`
+	IdleCommand             []string              `json:"idleCommand" yaml:"idleCommand" comment:"Run this command to wait for container exit" default:"[\"/usr/bin/containerssh-agent\", \"wait-signal\", \"--signal\", \"INT\", \"--signal\", \"TERM\"]"`
+	ShellCommand            []string              `json:"shellCommand" yaml:"shellCommand" comment:"Run this command as a default shell." default:"[\"/bin/bash\"]"`
+	AgentPath               string                `json:"agentPath" yaml:"agentPath" default:"/usr/bin/containerssh-agent"`
+	DisableAgent            bool                  `json:"disableAgent" yaml:"disableAgent"`
+	Subsystems              map[string]string     `json:"subsystems" yaml:"subsystems" comment:"Subsystem names and binaries map." default:"{\"sftp\":\"/usr/lib/openssh/sftp-server\"}"`
 	ImagePullPolicy         DockerImagePullPolicy `json:"imagePullPolicy" yaml:"imagePullPolicy" comment:"Image pull policy" default:"IfNotPresent"`
 	ExposeAuthMetadataAsEnv bool                  `json:"exposeAuthMetadataAsEnv" yaml:"exposeAuthMetadataAsEnv"`
 }
